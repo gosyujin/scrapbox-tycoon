@@ -132,12 +132,41 @@ export class Editor {
         this.render();
         const prev = this.container.querySelector<HTMLTextAreaElement>('textarea');
         if (prev) prev.setSelectionRange(prev.value.length, prev.value.length);
-      } else if (e.key === 'ArrowUp' && i > 0 && this.caretAtTopRow(ta)) {
+      } else if ((e.key === 'ArrowUp' || (e.ctrlKey && e.key.toLowerCase() === 'p')) && i > 0 && this.caretAtTopRow(ta)) {
         e.preventDefault();
         this.moveToLine(i, ta, i - 1);
-      } else if (e.key === 'ArrowDown' && i < this.lines.length - 1 && this.caretAtBottomRow(ta)) {
+      } else if (
+        (e.key === 'ArrowDown' || (e.ctrlKey && e.key.toLowerCase() === 'n')) &&
+        i < this.lines.length - 1 &&
+        this.caretAtBottomRow(ta)
+      ) {
         e.preventDefault();
         this.moveToLine(i, ta, i + 1);
+      } else if (e.key === 'ArrowLeft' && i > 0 && ta.selectionStart === 0 && ta.selectionEnd === 0) {
+        e.preventDefault();
+        this.commit(i, ta.value);
+        this.editingIndex = i - 1;
+        this.render();
+        const prev = this.container.querySelector<HTMLTextAreaElement>('textarea');
+        if (prev) {
+          prev.focus();
+          prev.setSelectionRange(prev.value.length, prev.value.length);
+        }
+      } else if (
+        e.key === 'ArrowRight' &&
+        i < this.lines.length - 1 &&
+        ta.selectionStart === ta.value.length &&
+        ta.selectionEnd === ta.value.length
+      ) {
+        e.preventDefault();
+        this.commit(i, ta.value);
+        this.editingIndex = i + 1;
+        this.render();
+        const next = this.container.querySelector<HTMLTextAreaElement>('textarea');
+        if (next) {
+          next.focus();
+          next.setSelectionRange(0, 0);
+        }
       }
     });
 
