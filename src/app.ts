@@ -84,7 +84,15 @@ function topBar(): string {
 
 function wireQuickOpen(): void {
   const input = document.getElementById('quick-open') as HTMLInputElement;
+  let composing = false;
+  input.addEventListener('compositionstart', () => {
+    composing = true;
+  });
+  input.addEventListener('compositionend', () => {
+    composing = false;
+  });
   input.addEventListener('keydown', (e) => {
+    if (composing || e.isComposing) return;
     if (e.key === 'Enter' && input.value.trim()) {
       navigate(`#/page/${encodeURIComponent(input.value.trim())}`);
     }
@@ -131,27 +139,53 @@ async function renderPage(title: string): Promise<void> {
   wireQuickOpen();
 
   const statusEl = document.getElementById('save-status') as HTMLElement;
-  let statusTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // Saves race if fired concurrently (e.g. several Enter presses in a row
+  // fire onChange before the previous save's GitHub PUT lands, and the
+  // second one carries a now-stale sha -> 409). Serialize per page: only one
+  // save in flight at a time, and a save that arrives mid-flight replaces
+  // whatever was queued rather than firing its own overlapping request.
+  let currentTitle = title;
+  let existsRemotely = !isNew;
+  let saving = false;
+  let pendingLines: string[] | null = null;
+
+  const flush = async (lines: string[]): Promise<void> => {
+    saving = true;
+    const newTitle = lines[0] || currentTitle;
+    statusEl.textContent = '保存中...';
+    statusEl.className = 'save-status';
+    try {
+      await store.savePage({ title: newTitle, lines });
+      if (newTitle !== currentTitle) {
+        if (existsRemotely) await store.deletePage(currentTitle);
+        currentTitle = newTitle;
+        history.replaceState(null, '', `#/page/${encodeURIComponent(newTitle)}`);
+      }
+      existsRemotely = true;
+      statusEl.textContent = '';
+    } catch (err) {
+      statusEl.textContent = `保存に失敗しました: ${(err as Error).message}（他端末との衝突や通信エラーの可能性があります。再読み込みして再編集してください）`;
+      statusEl.className = 'save-status save-error';
+    } finally {
+      saving = false;
+      if (pendingLines) {
+        const next = pendingLines;
+        pendingLines = null;
+        void flush(next);
+      }
+    }
+  };
 
   const editorEl = document.getElementById('editor') as HTMLElement;
   new Editor({
     container: editorEl,
     lines: page.lines,
-    onChange: async (lines) => {
-      const newTitle = lines[0] || title;
-      clearTimeout(statusTimer);
-      statusEl.textContent = '保存中...';
-      statusEl.className = 'save-status';
-      try {
-        await store.savePage({ title: newTitle, lines });
-        if (newTitle !== title) {
-          if (!isNew) await store.deletePage(title);
-          history.replaceState(null, '', `#/page/${encodeURIComponent(newTitle)}`);
-        }
-        statusEl.textContent = '';
-      } catch (err) {
-        statusEl.textContent = `保存に失敗しました: ${(err as Error).message}（他端末との衝突や通信エラーの可能性があります。再読み込みして再編集してください）`;
-        statusEl.className = 'save-status save-error';
+    onChange: (lines) => {
+      if (saving) {
+        pendingLines = lines;
+      } else {
+        void flush(lines);
       }
     },
   });

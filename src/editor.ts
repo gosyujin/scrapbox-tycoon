@@ -65,7 +65,19 @@ export class Editor {
     ta.addEventListener('input', autosize);
     setTimeout(autosize, 0);
 
+    // IME composition (e.g. Japanese kana->kanji conversion) confirms with
+    // Enter too; without this guard that keydown is misread as "commit the
+    // line", splitting it and duplicating the in-progress text.
+    let composing = false;
+    ta.addEventListener('compositionstart', () => {
+      composing = true;
+    });
+    ta.addEventListener('compositionend', () => {
+      composing = false;
+    });
+
     ta.addEventListener('keydown', (e) => {
+      if (composing || e.isComposing) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.commit(i, ta.value);
