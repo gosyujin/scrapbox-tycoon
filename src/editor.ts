@@ -57,20 +57,67 @@ export class Editor {
   // across several visual rows when the text is long. Arrow-key navigation
   // between logical lines should only kick in at the visual top/bottom row,
   // so wrapped text still lets the browser move within it as usual.
-  private isWrapped(ta: HTMLTextAreaElement): boolean {
+  //
+  // Checking only "caret at character 0 / at the end" is not enough: from
+  // the second visual row, native ArrowUp first snaps the caret to the
+  // start of the *first* row (wherever that lands column-wise), which is
+  // usually not character 0 — so a single Up press looked like it did
+  // nothing, requiring a second press. A hidden mirror element (same font
+  // and width, so it wraps identically) measures which visual row the
+  // caret is actually on.
+  private mirror: HTMLDivElement | null = null;
+
+  private getMirror(ta: HTMLTextAreaElement): HTMLDivElement {
+    if (!this.mirror) {
+      this.mirror = document.createElement('div');
+      this.mirror.style.position = 'absolute';
+      this.mirror.style.visibility = 'hidden';
+      this.mirror.style.top = '0';
+      this.mirror.style.left = '-9999px';
+      this.mirror.style.whiteSpace = 'pre-wrap';
+      this.mirror.style.wordWrap = 'break-word';
+      document.body.appendChild(this.mirror);
+    }
+    const cs = getComputedStyle(ta);
+    const el = this.mirror;
+    el.style.width = cs.width;
+    el.style.boxSizing = cs.boxSizing;
+    el.style.padding = cs.padding;
+    el.style.border = cs.border;
+    el.style.fontFamily = cs.fontFamily;
+    el.style.fontSize = cs.fontSize;
+    el.style.fontWeight = cs.fontWeight;
+    el.style.fontStyle = cs.fontStyle;
+    el.style.letterSpacing = cs.letterSpacing;
+    el.style.lineHeight = cs.lineHeight;
+    return el;
+  }
+
+  private caretRow(ta: HTMLTextAreaElement): { row: number; totalRows: number } {
     const cs = getComputedStyle(ta);
     const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2;
-    const verticalExtra =
-      parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
-    return ta.scrollHeight > lineHeight + verticalExtra + 2;
+    if (lineHeight <= 0) return { row: 0, totalRows: 1 };
+
+    const mirror = this.getMirror(ta);
+    const caretPos = ta.selectionStart ?? 0;
+
+    mirror.textContent = ta.value.slice(0, caretPos) || '​';
+    const beforeHeight = mirror.scrollHeight;
+    mirror.textContent = ta.value || '​';
+    const totalHeight = mirror.scrollHeight;
+
+    const row = Math.max(0, Math.round(beforeHeight / lineHeight) - 1);
+    const totalRows = Math.max(1, Math.round(totalHeight / lineHeight));
+    return { row, totalRows };
   }
 
   private caretAtTopRow(ta: HTMLTextAreaElement): boolean {
-    return !this.isWrapped(ta) || (ta.selectionStart ?? 0) === 0;
+    return this.caretRow(ta).row === 0;
   }
 
   private caretAtBottomRow(ta: HTMLTextAreaElement): boolean {
-    return !this.isWrapped(ta) || (ta.selectionEnd ?? ta.value.length) === ta.value.length;
+    const { row, totalRows } = this.caretRow(ta);
+    return row >= totalRows - 1;
   }
 
   private moveToLine(fromIndex: number, ta: HTMLTextAreaElement, toIndex: number): void {
