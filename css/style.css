@@ -153,6 +153,16 @@ a { color: var(--link); }
   pointer-events: none;
 }
 
+.build-info {
+  position: fixed;
+  left: 10px;
+  bottom: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
 .settings label {
   display: block;
   margin: 10px 0 4px;

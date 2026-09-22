@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/write-build-info.mjs && node scripts/cache-bust-imports.mjs",
     "watch": "tsc --watch",
-    "dev": "tsc && node server.js"
+    "dev": "npm run build && node server.js"
   },
   "devDependencies": {
     "typescript": "^5.6.0"

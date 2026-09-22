@@ -291,4 +291,24 @@ function escapeAttr(s: string): string {
   return escapeHtml(s || '').replace(/"/g, '&quot;');
 }
 
+interface BuildInfo {
+  shortSha: string;
+  builtAt: string;
+}
+
+async function loadBuildInfo(): Promise<void> {
+  const el = document.getElementById('build-info') as HTMLElement | null;
+  if (!el) return;
+  try {
+    const res = await fetch('./build-info.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error(String(res.status));
+    const info: BuildInfo = await res.json();
+    const built = new Date(info.builtAt).toLocaleString();
+    el.textContent = `build: ${info.shortSha} (${built})`;
+  } catch {
+    el.textContent = 'build: (dev / unknown)';
+  }
+}
+
 void route();
+void loadBuildInfo();

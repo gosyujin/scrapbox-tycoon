@@ -26,11 +26,16 @@ jobs:
           node-version: 20
       - run: npm ci
       - run: npm run build
-      - run: |
+      - name: Stage dist and cache-bust asset URLs
+        run: |
           mkdir -p dist
           cp index.html dist/
           cp -r css dist/
           cp -r js dist/
+          cp build-info.json dist/
+          SHA=$(git rev-parse --short HEAD)
+          sed -i "s/css\/style.css\"/css\/style.css?v=$SHA\"/" dist/index.html
+          sed -i "s/js\/app.js\"/js\/app.js?v=$SHA\"/" dist/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
