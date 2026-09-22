@@ -2,8 +2,8 @@
   "title": "Automated Atomic Commit Test",
   "lines": [
     "Automated Atomic Commit Test",
-    "line two"
+    "from device A"
   ],
   "created": 1790102885,
-  "updated": 1790102885
+  "updated": 1790102909
 }
