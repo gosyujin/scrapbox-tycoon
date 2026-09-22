@@ -7,12 +7,7 @@
   {
     "title": "すまほから",
     "path": "pages/すまほから.json",
-    "updated": 1790119283
-  },
-  {
-    "title": "すますま-",
-    "path": "pages/すますま-.json",
-    "updated": 1790118439
+    "updated": 1790119374
   },
   {
     "title": "PCからのテスト2＿",
@@ -28,5 +23,10 @@
     "title": "新しいページてｓｔ",
     "path": "pages/新しいページてｓｔ.json",
     "updated": 1790119182
+  },
+  {
+    "title": "すま",
+    "path": "pages/すま.json",
+    "updated": 1790119488
   }
 ]
