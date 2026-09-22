@@ -1,0 +1,14 @@
+{
+  "name": "scrapbox-tycoon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "dev": "tsc && node server.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
