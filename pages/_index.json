@@ -28,5 +28,10 @@
     "title": "新しいページてｓｔ",
     "path": "pages/新しいページてｓｔ.json",
     "updated": 1790118619
+  },
+  {
+    "title": "Sync Test A",
+    "path": "pages/Sync Test A.json",
+    "updated": 1790118857
   }
 ]
