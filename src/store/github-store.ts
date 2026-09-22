@@ -228,13 +228,6 @@ export class GitHubStore implements Store {
 
     await this.commit(`update: ${page.title}`, async (baseCommitSha) => {
       const existingContent = await this.readFileAt(baseCommitSha, path);
-      if (baselineContent === undefined) {
-        baselineContent = existingContent;
-      } else if (existingContent !== baselineContent) {
-        throw new SaveConflictError(
-          `"${page.title}" was changed by another device just now. Reload the page and re-apply your edit.`
-        );
-      }
       const existing: Page | null = existingContent ? JSON.parse(existingContent) : null;
       const record: Page = {
         title: page.title,
@@ -242,6 +235,24 @@ export class GitHubStore implements Store {
         created: page.created ?? (existing ? existing.created : now),
         updated: page.updated ?? now,
       };
+
+      // `record` (including `updated`, fixed once above as `now`) is the
+      // same on every attempt within this call. If a retry finds the file
+      // already holding exactly that content, an earlier attempt's write
+      // actually landed even though its response looked like a failure
+      // (e.g. a flaky connection) — that is us, not a conflict, so let the
+      // retry proceed rather than reporting a false "changed by another
+      // device" error.
+      const isOwnPriorWrite =
+        existing !== null && existing.updated === record.updated && JSON.stringify(existing.lines) === JSON.stringify(record.lines);
+
+      if (baselineContent === undefined) {
+        baselineContent = existingContent;
+      } else if (existingContent !== baselineContent && !isOwnPriorWrite) {
+        throw new SaveConflictError(
+          `"${page.title}" was changed by another device just now. Reload the page and re-apply your edit.`
+        );
+      }
 
       const entries = await this.readIndexAt(baseCommitSha);
       const nextEntries = entries.filter((e) => e.title !== page.title);
