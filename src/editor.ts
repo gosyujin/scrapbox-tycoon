@@ -53,6 +53,39 @@ export class Editor {
     }
   }
 
+  // A logical "line" is one array entry, but its textarea can still wrap
+  // across several visual rows when the text is long. Arrow-key navigation
+  // between logical lines should only kick in at the visual top/bottom row,
+  // so wrapped text still lets the browser move within it as usual.
+  private isWrapped(ta: HTMLTextAreaElement): boolean {
+    const cs = getComputedStyle(ta);
+    const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2;
+    const verticalExtra =
+      parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+    return ta.scrollHeight > lineHeight + verticalExtra + 2;
+  }
+
+  private caretAtTopRow(ta: HTMLTextAreaElement): boolean {
+    return !this.isWrapped(ta) || (ta.selectionStart ?? 0) === 0;
+  }
+
+  private caretAtBottomRow(ta: HTMLTextAreaElement): boolean {
+    return !this.isWrapped(ta) || (ta.selectionEnd ?? ta.value.length) === ta.value.length;
+  }
+
+  private moveToLine(fromIndex: number, ta: HTMLTextAreaElement, toIndex: number): void {
+    const caretOffset = ta.selectionStart ?? 0;
+    this.commit(fromIndex, ta.value);
+    this.editingIndex = toIndex;
+    this.render();
+    const target = this.container.querySelector<HTMLTextAreaElement>('textarea');
+    if (target) {
+      target.focus();
+      const pos = Math.min(caretOffset, target.value.length);
+      target.setSelectionRange(pos, pos);
+    }
+  }
+
   private buildTextarea(i: number, text: string): HTMLTextAreaElement {
     const ta = document.createElement('textarea');
     ta.className = 'line-edit' + (i === 0 ? ' line-title' : '');
@@ -99,6 +132,36 @@ export class Editor {
         this.render();
         const prev = this.container.querySelector<HTMLTextAreaElement>('textarea');
         if (prev) prev.setSelectionRange(prev.value.length, prev.value.length);
+      } else if (e.key === 'ArrowUp' && i > 0 && this.caretAtTopRow(ta)) {
+        e.preventDefault();
+        this.moveToLine(i, ta, i - 1);
+      } else if (e.key === 'ArrowDown' && i < this.lines.length - 1 && this.caretAtBottomRow(ta)) {
+        e.preventDefault();
+        this.moveToLine(i, ta, i + 1);
+      }
+    });
+
+    ta.addEventListener('paste', (e) => {
+      const text = e.clipboardData?.getData('text');
+      if (!text || !text.includes('\n')) return; // single line: let the browser paste normally
+      e.preventDefault();
+
+      const before = ta.value.slice(0, ta.selectionStart ?? ta.value.length);
+      const after = ta.value.slice(ta.selectionEnd ?? ta.value.length);
+      const pasted = text.split(/\r\n|\r|\n/);
+
+      const lastPasted = pasted[pasted.length - 1] ?? '';
+      this.lines[i] = before + (pasted[0] ?? '');
+      const middle = pasted.slice(1, -1);
+      this.lines.splice(i + 1, 0, ...middle, lastPasted + after);
+      this.notifyChange();
+
+      this.editingIndex = i + pasted.length - 1;
+      this.render();
+      const target = this.container.querySelector<HTMLTextAreaElement>('textarea');
+      if (target) {
+        target.focus();
+        target.setSelectionRange(lastPasted.length, lastPasted.length);
       }
     });
 
