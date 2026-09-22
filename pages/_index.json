@@ -5,11 +5,6 @@
     "updated": 1790095906
   },
   {
-    "title": "GitHub Test",
-    "path": "pages/GitHub%20Test.json",
-    "updated": 1790096646
-  },
-  {
     "title": "スマホから変臭",
     "path": "pages/%E3%82%B9%E3%83%9E%E3%83%9B%E3%81%8B%E3%82%89%E5%A4%89%E8%87%AD.json",
     "updated": 1790096922
@@ -38,5 +33,10 @@
     "title": "テストします",
     "path": "pages/%E3%83%86%E3%82%B9%E3%83%88%E3%81%97%E3%81%BE%E3%81%99.json",
     "updated": 1790097429
+  },
+  {
+    "title": "GitHub Test",
+    "path": "pages/GitHub%20Test.json",
+    "updated": 1790097469
   }
 ]
