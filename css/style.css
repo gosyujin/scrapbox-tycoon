@@ -64,6 +64,17 @@ body {
 }
 .topbar nav a:hover { opacity: 1; }
 
+@media (max-width: 480px) {
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .quick-open {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+
 .content {
   max-width: 860px;
   margin: 0 auto;
