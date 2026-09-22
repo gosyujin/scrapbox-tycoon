@@ -122,6 +122,7 @@ async function renderPage(title: string): Promise<void> {
     <div class="content page-content">
       ${isNew ? '<p class="muted">新規ページ（最初の行を編集すると保存されます）</p>' : ''}
       <div id="editor"></div>
+      <p id="save-status" class="save-status"></p>
       <section class="linked">
         <h3 id="linked-heading">逆リンク</h3>
         <ul id="backlinks" class="muted">読み込み中...</ul>
@@ -129,16 +130,28 @@ async function renderPage(title: string): Promise<void> {
     </div>`;
   wireQuickOpen();
 
+  const statusEl = document.getElementById('save-status') as HTMLElement;
+  let statusTimer: ReturnType<typeof setTimeout> | undefined;
+
   const editorEl = document.getElementById('editor') as HTMLElement;
   new Editor({
     container: editorEl,
     lines: page.lines,
     onChange: async (lines) => {
       const newTitle = lines[0] || title;
-      await store.savePage({ title: newTitle, lines });
-      if (newTitle !== title) {
-        if (!isNew) await store.deletePage(title);
-        history.replaceState(null, '', `#/page/${encodeURIComponent(newTitle)}`);
+      clearTimeout(statusTimer);
+      statusEl.textContent = '保存中...';
+      statusEl.className = 'save-status';
+      try {
+        await store.savePage({ title: newTitle, lines });
+        if (newTitle !== title) {
+          if (!isNew) await store.deletePage(title);
+          history.replaceState(null, '', `#/page/${encodeURIComponent(newTitle)}`);
+        }
+        statusEl.textContent = '';
+      } catch (err) {
+        statusEl.textContent = `保存に失敗しました: ${(err as Error).message}（他端末との衝突や通信エラーの可能性があります。再読み込みして再編集してください）`;
+        statusEl.className = 'save-status save-error';
       }
     },
   });

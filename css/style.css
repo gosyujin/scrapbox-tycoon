@@ -101,6 +101,9 @@ body {
 a { color: var(--link); }
 .muted { color: var(--muted); font-size: 13px; }
 
+.save-status { min-height: 1.2em; font-size: 13px; color: var(--muted); }
+.save-status.save-error { color: #d1453b; }
+
 .line-row { min-height: 1.6em; }
 
 .line-view, .line-edit {
