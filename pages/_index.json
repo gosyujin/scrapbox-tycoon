@@ -23,5 +23,10 @@
     "title": "Automated Concurrent Page A",
     "path": "pages/Automated Concurrent Page A.json",
     "updated": 1790102917
+  },
+  {
+    "title": "Automated Concurrent Page B",
+    "path": "pages/Automated Concurrent Page B.json",
+    "updated": 1790102917
   }
 ]
