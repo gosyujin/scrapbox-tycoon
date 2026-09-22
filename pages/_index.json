@@ -33,5 +33,10 @@
     "title": "PCからいれる＿",
     "path": "pages/PC%E3%81%8B%E3%82%89%E3%81%84%E3%82%8C%E3%82%8B%EF%BC%BF.json",
     "updated": 1790097116
+  },
+  {
+    "title": "あての",
+    "path": "pages/%E3%81%82%E3%81%A6%E3%81%AE.json",
+    "updated": 1790097277
   }
 ]
