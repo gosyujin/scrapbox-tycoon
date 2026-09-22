@@ -37,4 +37,8 @@ export interface SyncCapable {
   syncNow(): Promise<void>;
   getSyncStatus(): SyncStatus;
   onSyncStatusChange(listener: (status: SyncStatus) => void): () => void;
+  // Stops background sync. Call before discarding an instance (e.g.
+  // replacing it with a freshly-configured one) so its debounce timer
+  // cannot fire later and race the replacement.
+  dispose(): void;
 }

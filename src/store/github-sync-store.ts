@@ -57,6 +57,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
   private listeners = new Set<(status: SyncStatus) => void>();
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
   private syncPromise: Promise<void> | null = null;
+  private disposed = false;
 
   constructor(config: GitHubStoreConfig) {
     this.remote = new GitHubStore(config);
@@ -108,11 +109,23 @@ export class GitHubSyncStore implements Store, SyncCapable {
   }
 
   async syncNow(): Promise<void> {
+    if (this.disposed) return;
     if (this.syncPromise) return this.syncPromise;
     this.syncPromise = this.runSync().finally(() => {
       this.syncPromise = null;
     });
     return this.syncPromise;
+  }
+
+  // Stops this instance's background sync. Without this, replacing `store`
+  // with a fresh instance (e.g. re-saving settings) leaves the old
+  // instance's debounce timer alive — setTimeout holds its own reference to
+  // the closure regardless of whether anything else still points at the
+  // instance — so it fires later and can race a newer instance's sync,
+  // repeatedly bouncing the branch out from under each other's commits.
+  dispose(): void {
+    this.disposed = true;
+    clearTimeout(this.debounceTimer);
   }
 
   private markDirty(title: string): void {
@@ -130,6 +143,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
   }
 
   private scheduleSync(delayMs: number = AUTO_SYNC_DEBOUNCE_MS): void {
+    if (this.disposed) return;
     clearTimeout(this.debounceTimer);
     this.debounceTimer = setTimeout(() => void this.syncNow(), delayMs);
   }

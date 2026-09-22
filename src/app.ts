@@ -257,6 +257,7 @@ function renderSettings(): void {
       token: (document.getElementById('gh-token') as HTMLInputElement).value.trim(),
     };
     saveSettings(settings);
+    if (isSyncCapable(store)) store.dispose();
     store = makeStore();
     wireStoreStatus();
     updateBadge();
