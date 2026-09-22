@@ -3,5 +3,10 @@
     "title": "スマホからテストします",
     "path": "pages/スマホからテストします.json",
     "updated": 1790098847
+  },
+  {
+    "title": "すまほから",
+    "path": "pages/すまほから.json",
+    "updated": 1790098889
   }
 ]
