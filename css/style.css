@@ -101,9 +101,6 @@ body {
 a { color: var(--link); }
 .muted { color: var(--muted); font-size: 13px; }
 
-.save-status { min-height: 1.2em; font-size: 13px; color: var(--muted); }
-.save-status.save-error { color: #d1453b; }
-
 .line-row { min-height: 1.6em; }
 
 .line-view, .line-edit {
@@ -145,12 +142,16 @@ a { color: var(--link); }
   position: fixed;
   right: 10px;
   bottom: 10px;
+  max-width: calc(100vw - 20px);
   font-size: 11px;
   color: var(--muted);
   background: var(--accent);
   padding: 3px 8px;
   border-radius: 10px;
   pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .build-info {

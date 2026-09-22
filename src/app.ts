@@ -1,9 +1,9 @@
 import { LocalStore } from './store/local-store.js';
-import { GitHubStore } from './store/github-store.js';
+import { GitHubSyncStore } from './store/github-sync-store.js';
 import { Editor } from './editor.js';
 import { extractLinks } from './parser.js';
 import { parseScrapboxExport, buildScrapboxExport } from './scrapbox-format.js';
-import type { Page, Store } from './types.js';
+import type { Page, Store, SyncCapable, SyncStatus } from './types.js';
 
 const SETTINGS_KEY = 'scrapbox_tycoon_settings_v1';
 
@@ -29,9 +29,13 @@ function saveSettings(s: Settings): void {
 
 let settings: Settings = { backend: 'local', owner: '', repo: '', branch: 'main', token: '', ...loadSettings() };
 
+function isSyncCapable(s: Store): s is Store & SyncCapable {
+  return typeof (s as Partial<SyncCapable>).syncNow === 'function';
+}
+
 function makeStore(): Store {
   if (settings.backend === 'github' && settings.owner && settings.repo && settings.token) {
-    return new GitHubStore(settings);
+    return new GitHubSyncStore(settings);
   }
   return new LocalStore();
 }
@@ -41,10 +45,27 @@ let store: Store = makeStore();
 const app = document.getElementById('app') as HTMLElement;
 const backendBadge = document.getElementById('backend-badge') as HTMLElement;
 
-function updateBadge(): void {
-  backendBadge.textContent =
-    store instanceof GitHubStore ? `GitHub: ${settings.owner}/${settings.repo}@${settings.branch}` : 'Local (this browser only)';
+function describeSyncStatus(s: SyncStatus): string {
+  if (s.state === 'syncing') return '同期中...';
+  if (s.state === 'error') return `同期エラー: ${s.lastError}`;
+  if (s.dirtyCount > 0) return `未同期の変更: ${s.dirtyCount}件`;
+  return '同期済み';
 }
+
+function updateBadge(): void {
+  if (isSyncCapable(store)) {
+    backendBadge.textContent = `GitHub: ${settings.owner}/${settings.repo}@${settings.branch} — ${describeSyncStatus(store.getSyncStatus())}`;
+  } else {
+    backendBadge.textContent = 'Local (this browser only)';
+  }
+}
+
+function wireStoreStatus(): void {
+  if (isSyncCapable(store)) {
+    store.onSyncStatusChange(() => updateBadge());
+  }
+}
+wireStoreStatus();
 
 function navigate(hash: string): void {
   location.hash = hash;
@@ -130,7 +151,6 @@ async function renderPage(title: string): Promise<void> {
     <div class="content page-content">
       ${isNew ? '<p class="muted">新規ページ（最初の行を編集すると保存されます）</p>' : ''}
       <div id="editor"></div>
-      <p id="save-status" class="save-status"></p>
       <section class="linked">
         <h3 id="linked-heading">逆リンク</h3>
         <ul id="backlinks" class="muted">読み込み中...</ul>
@@ -138,55 +158,25 @@ async function renderPage(title: string): Promise<void> {
     </div>`;
   wireQuickOpen();
 
-  const statusEl = document.getElementById('save-status') as HTMLElement;
-
-  // Saves race if fired concurrently (e.g. several Enter presses in a row
-  // fire onChange before the previous save's GitHub PUT lands, and the
-  // second one carries a now-stale sha -> 409). Serialize per page: only one
-  // save in flight at a time, and a save that arrives mid-flight replaces
-  // whatever was queued rather than firing its own overlapping request.
+  // Saves go straight to localStorage (instant, no network), so there is no
+  // need to serialize/queue them here — GitHubSyncStore buffers and pushes
+  // them to GitHub on its own schedule (see src/store/github-sync-store.ts).
   let currentTitle = title;
-  let existsRemotely = !isNew;
-  let saving = false;
-  let pendingLines: string[] | null = null;
-
-  const flush = async (lines: string[]): Promise<void> => {
-    saving = true;
-    const newTitle = lines[0] || currentTitle;
-    statusEl.textContent = '保存中...';
-    statusEl.className = 'save-status';
-    try {
-      await store.savePage({ title: newTitle, lines });
-      if (newTitle !== currentTitle) {
-        if (existsRemotely) await store.deletePage(currentTitle);
-        currentTitle = newTitle;
-        history.replaceState(null, '', `#/page/${encodeURIComponent(newTitle)}`);
-      }
-      existsRemotely = true;
-      statusEl.textContent = '';
-    } catch (err) {
-      statusEl.textContent = `保存に失敗しました: ${(err as Error).message}（他端末との衝突や通信エラーの可能性があります。再読み込みして再編集してください）`;
-      statusEl.className = 'save-status save-error';
-    } finally {
-      saving = false;
-      if (pendingLines) {
-        const next = pendingLines;
-        pendingLines = null;
-        void flush(next);
-      }
-    }
-  };
+  let existsLocally = !isNew;
 
   const editorEl = document.getElementById('editor') as HTMLElement;
   new Editor({
     container: editorEl,
     lines: page.lines,
-    onChange: (lines) => {
-      if (saving) {
-        pendingLines = lines;
-      } else {
-        void flush(lines);
+    onChange: async (lines) => {
+      const newTitle = lines[0] || currentTitle;
+      await store.savePage({ title: newTitle, lines });
+      if (newTitle !== currentTitle) {
+        if (existsLocally) await store.deletePage(currentTitle);
+        currentTitle = newTitle;
+        history.replaceState(null, '', `#/page/${encodeURIComponent(newTitle)}`);
       }
+      existsLocally = true;
     },
   });
 
@@ -213,6 +203,11 @@ async function renderBacklinks(title: string): Promise<void> {
 }
 
 function renderSettings(): void {
+  const syncSection = isSyncCapable(store)
+    ? `<p class="muted" id="sync-status-line">${escapeHtml(describeSyncStatus(store.getSyncStatus()))}</p>
+       <button id="sync-now">今すぐ同期</button>`
+    : '';
+
   app.innerHTML = `
     ${topBar()}
     <div class="content settings">
@@ -225,7 +220,8 @@ function renderSettings(): void {
         <label>Repo <input id="gh-repo" value="${escapeAttr(settings.repo)}" placeholder="my-notes"></label>
         <label>Branch <input id="gh-branch" value="${escapeAttr(settings.branch)}" placeholder="main"></label>
         <label>Fine-grained PAT (Contents: read/write, repo限定) <input id="gh-token" type="password" value="${escapeAttr(settings.token)}"></label>
-        <p class="muted">トークンはこのブラウザの localStorage にのみ保存され、GitHub API 以外には送信されません。</p>
+        <p class="muted">トークンはこのブラウザの localStorage にのみ保存され、GitHub API 以外には送信されません。編集は常にこのブラウザに即座に保存され、GitHubへは数秒後または「今すぐ同期」でまとめて送られます。</p>
+        ${syncSection}
       </div>
 
       <button id="save-settings">保存</button>
@@ -238,6 +234,19 @@ function renderSettings(): void {
     </div>`;
   wireQuickOpen();
 
+  if (isSyncCapable(store)) {
+    const syncStore = store;
+    const statusLine = document.getElementById('sync-status-line') as HTMLElement;
+    syncStore.onSyncStatusChange((s) => {
+      statusLine.textContent = describeSyncStatus(s);
+    });
+    document.getElementById('sync-now')!.addEventListener('click', () => {
+      void syncStore.syncNow().catch(() => {
+        /* status line already reflects the error */
+      });
+    });
+  }
+
   document.getElementById('save-settings')!.addEventListener('click', () => {
     const backendInput = document.querySelector<HTMLInputElement>('input[name=backend]:checked')!;
     settings = {
@@ -249,6 +258,7 @@ function renderSettings(): void {
     };
     saveSettings(settings);
     store = makeStore();
+    wireStoreStatus();
     updateBadge();
     navigate('#/');
   });

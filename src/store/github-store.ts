@@ -1,36 +1,29 @@
-// GitHub-backed store. All reads and writes go through the Git Data API
+// Low-level GitHub I/O: reads and a batched write, both via the Git Data API
 // (blobs/trees/commits), not the simpler Contents API. Two reasons:
 //
-// 1. Atomicity: a page's own file and the shared index (pages/_index.json)
-//    must land in ONE commit. With two separate Contents-API PUTs, a
-//    failure or a concurrent writer between them could leave the index and
-//    the actual files out of sync (a page missing from the list, or the
-//    list pointing at nothing) — this is exactly what was observed.
+// 1. Atomicity: a batch of page changes and the shared index
+//    (pages/_index.json) must land in ONE commit — with separate
+//    Contents-API PUTs, a failure or a concurrent writer partway through
+//    could leave the index and the actual files out of sync (a page
+//    missing from the list, or the list pointing at nothing).
 // 2. Consistency: the Contents API can lag a moment behind a just-created
 //    commit (a fresh page briefly reading back as 404). Git objects
 //    (blobs/trees), once created, are immutable and addressed by sha, so
 //    reading them back does not race the same way.
 //
-// Commits are retried against the latest branch state on conflict, so two
-// devices saving *different* pages at nearly the same time resolve
-// transparently (the shared index just gets both entries merged in). Only a
-// real collision — another device changing the *same* page's content
-// between our attempts — surfaces as an error to the user.
+// This class only talks to GitHub; it does not decide *when* to write.
+// GitHubSyncStore is the one implementing the app's Store interface — it
+// buffers edits in localStorage and calls pushBatch() here to sync them in
+// one commit, which is what keeps this simple: no per-edit conflict
+// handling is needed at this layer (see github-sync-store.ts for why).
 //
 // Layout in the repo:
-//   pages/_index.json          -> [{title, path, updated}, ...]
-//   pages/<encoded-title>.json -> {title, lines, created, updated}
-import type { Page, PageSummary, PageInput, Store } from '../types.js';
+//   pages/_index.json -> [{title, path, updated}, ...]
+//   pages/<title>.json -> {title, lines, created, updated}
+import type { Page, PageSummary } from '../types.js';
 
 const API = 'https://api.github.com';
 const MAX_COMMIT_ATTEMPTS = 5;
-
-function utf8ToBase64(str: string): string {
-  const bytes = new TextEncoder().encode(str);
-  let binary = '';
-  bytes.forEach((b) => (binary += String.fromCharCode(b)));
-  return btoa(binary);
-}
 
 function base64ToUtf8(b64: string): string {
   const binary = atob(b64.replace(/\n/g, ''));
@@ -67,12 +60,14 @@ interface FileChange {
   content: string | null;
 }
 
-// Thrown when the page being saved was genuinely changed by someone else
-// since we started (not just an unrelated page bumping the shared index).
-// Retrying would not help — the caller needs to reload and re-apply.
-class SaveConflictError extends Error {}
+export interface PageChange {
+  title: string;
+  lines: string[] | null; // null = delete this page
+  created?: number;
+  updated?: number;
+}
 
-export class GitHubStore implements Store {
+export class GitHubStore {
   private owner: string;
   private repo: string;
   private branch: string;
@@ -90,11 +85,6 @@ export class GitHubStore implements Store {
       Authorization: `Bearer ${this.token}`,
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
-      // Without this, fetch() sends a plain string body as text/plain, and
-      // GitHub's git/trees endpoint has been observed to fail (422
-      // GitRPC::BadObjectState) on bodies containing multi-byte UTF-8 (e.g.
-      // Japanese page titles in the index) when the content type is not
-      // explicitly declared as JSON.
       'Content-Type': 'application/json',
     };
   }
@@ -150,14 +140,11 @@ export class GitHubStore implements Store {
   // be recomputed against the *new* base commit — otherwise a retried write
   // would blindly reapply a stale index computed before the conflict.
   //
-  // Retries cover two distinct situations: the branch tip moving under us
-  // (someone else committed first — expected under concurrent use, and
-  // `buildChanges` re-running against the new tip resolves it), and GitHub's
-  // git/trees or git/commits endpoints occasionally failing transiently
-  // (e.g. "GitRPC::BadObjectState") — observed in practice to succeed when
-  // the identical request is simply retried. A real same-page conflict
-  // (SaveConflictError) is the one case that is not retried, since retrying
-  // cannot fix it.
+  // Retries cover two situations: the branch tip moving under us (someone
+  // else committed first), and GitHub's git/trees or git/commits endpoints
+  // occasionally failing transiently (e.g. "GitRPC::BadObjectState") —
+  // observed in practice to succeed when the identical request is simply
+  // retried.
   private async commit(message: string, buildChanges: (baseCommitSha: string) => Promise<FileChange[]>): Promise<void> {
     let lastError: unknown;
     for (let attempt = 1; attempt <= MAX_COMMIT_ATTEMPTS; attempt++) {
@@ -194,7 +181,6 @@ export class GitHubStore implements Store {
         // Someone else moved the branch between our read and our commit.
         lastError = new Error('branch moved during save');
       } catch (err) {
-        if (err instanceof SaveConflictError) throw err;
         lastError = err;
       }
       if (attempt < MAX_COMMIT_ATTEMPTS) {
@@ -215,76 +201,38 @@ export class GitHubStore implements Store {
     return content ? JSON.parse(content) : null;
   }
 
-  async savePage(page: PageInput): Promise<void> {
+  // Writes many pages (and/or deletes) in ONE commit — used to push a batch
+  // of locally-buffered edits at once instead of one commit per edit.
+  async pushBatch(changes: PageChange[], message: string): Promise<void> {
+    if (changes.length === 0) return;
     const now = Math.floor(Date.now() / 1000);
-    const path = `pages/${slug(page.title)}`;
 
-    // Retries re-derive `changes` from the latest branch tip so an unrelated
-    // page's update (which only moved the shared index) resolves silently.
-    // But if THIS page's own content changed between attempts, that is a
-    // real conflict — e.g. another device edited the same page seconds ago
-    // — and must not be silently overwritten.
-    let baselineContent: string | null | undefined;
+    await this.commit(message, async (baseCommitSha) => {
+      const entries = await this.readIndexAt(baseCommitSha);
+      const entryMap = new Map(entries.map((e) => [e.title, e]));
+      const fileChanges: FileChange[] = [];
 
-    await this.commit(`update: ${page.title}`, async (baseCommitSha) => {
-      const existingContent = await this.readFileAt(baseCommitSha, path);
-      const existing: Page | null = existingContent ? JSON.parse(existingContent) : null;
-      const record: Page = {
-        title: page.title,
-        lines: page.lines,
-        created: page.created ?? (existing ? existing.created : now),
-        updated: page.updated ?? now,
-      };
-
-      // `record` (including `updated`, fixed once above as `now`) is the
-      // same on every attempt within this call. If a retry finds the file
-      // already holding exactly that content, an earlier attempt's write
-      // actually landed even though its response looked like a failure
-      // (e.g. a flaky connection) — that is us, not a conflict, so let the
-      // retry proceed rather than reporting a false "changed by another
-      // device" error.
-      const isOwnPriorWrite =
-        existing !== null && existing.updated === record.updated && JSON.stringify(existing.lines) === JSON.stringify(record.lines);
-
-      if (baselineContent === undefined) {
-        baselineContent = existingContent;
-      } else if (existingContent !== baselineContent && !isOwnPriorWrite) {
-        throw new SaveConflictError(
-          `"${page.title}" was changed by another device just now. Reload the page and re-apply your edit.`
-        );
+      for (const change of changes) {
+        const path = `pages/${slug(change.title)}`;
+        if (change.lines === null) {
+          entryMap.delete(change.title);
+          fileChanges.push({ path, content: null });
+          continue;
+        }
+        const existingContent = await this.readFileAt(baseCommitSha, path);
+        const existing: Page | null = existingContent ? JSON.parse(existingContent) : null;
+        const record: Page = {
+          title: change.title,
+          lines: change.lines,
+          created: change.created ?? (existing ? existing.created : now),
+          updated: change.updated ?? now,
+        };
+        fileChanges.push({ path, content: JSON.stringify(record, null, 2) });
+        entryMap.set(change.title, { title: change.title, path, updated: record.updated });
       }
 
-      const entries = await this.readIndexAt(baseCommitSha);
-      const nextEntries = entries.filter((e) => e.title !== page.title);
-      nextEntries.push({ title: page.title, path, updated: record.updated });
-
-      return [
-        { path, content: JSON.stringify(record, null, 2) },
-        { path: 'pages/_index.json', content: JSON.stringify(nextEntries, null, 2) },
-      ];
+      fileChanges.push({ path: 'pages/_index.json', content: JSON.stringify([...entryMap.values()], null, 2) });
+      return fileChanges;
     });
-  }
-
-  async deletePage(title: string): Promise<void> {
-    const path = `pages/${slug(title)}`;
-
-    await this.commit(`delete: ${title}`, async (baseCommitSha) => {
-      const entries = await this.readIndexAt(baseCommitSha);
-      const nextEntries = entries.filter((e) => e.title !== title);
-
-      return [
-        { path, content: null },
-        { path: 'pages/_index.json', content: JSON.stringify(nextEntries, null, 2) },
-      ];
-    });
-  }
-
-  async renamePage(oldTitle: string, newTitle: string): Promise<void> {
-    const page = await this.getPage(oldTitle);
-    if (!page) return;
-    page.title = newTitle;
-    page.lines[0] = newTitle;
-    await this.savePage(page);
-    await this.deletePage(oldTitle);
   }
 }

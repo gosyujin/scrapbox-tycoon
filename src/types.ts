@@ -22,3 +22,19 @@ export interface Store {
   deletePage(title: string): Promise<void>;
   renamePage(oldTitle: string, newTitle: string): Promise<void>;
 }
+
+export interface SyncStatus {
+  state: 'idle' | 'syncing' | 'error';
+  dirtyCount: number;
+  lastSyncedAt: number | null;
+  lastError: string | null;
+}
+
+// Implemented by stores that buffer edits locally and push them to a remote
+// on their own schedule (see GitHubSyncStore), rather than writing straight
+// through on every edit.
+export interface SyncCapable {
+  syncNow(): Promise<void>;
+  getSyncStatus(): SyncStatus;
+  onSyncStatusChange(listener: (status: SyncStatus) => void): () => void;
+}
