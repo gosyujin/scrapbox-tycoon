@@ -341,15 +341,26 @@ export class Editor {
     const ta = this.textarea;
     if (!ta || this.selStart === null || this.selEnd === null) return;
     const selected = ta.value.slice(this.selStart, this.selEnd);
-    const newLines = selected.split('\n');
-    const title = (newLines[0] || '').trim();
+    const selectedLines = selected.split('\n');
+    const title = (selectedLines[0] || '').trim();
     if (!title) {
       this.hideSelectionToolbar();
       return;
     }
+    // Everything after the selection's own first line -- e.g. selecting a
+    // whole paragraph carries its later lines into the new page's body.
+    // Selecting just a single term/phrase (the common case) leaves this
+    // empty, so the new page is just a title + backlink stub.
+    const body = selectedLines.slice(1);
+    const sourceTitle = ta.value.split('\n', 1)[0] || '';
+
     this.replaceSelectionWithLink(title);
+
+    // Matches Scrapbox's own "split into a new page" layout: title, a
+    // backlink to where it came from, then whatever body text was cut.
+    const newPageLines = [title, '', `from [${sourceTitle}]`, ...(body.length ? ['', ...body] : [])];
     try {
-      await this.onExtractPage?.(title, newLines);
+      await this.onExtractPage?.(title, newPageLines);
       // So the new link renders as "exists" (not "missing") the moment
       // this page is next rendered, without waiting for a full reload.
       this.renderOpts.knownTitles.add(title.toLowerCase());
