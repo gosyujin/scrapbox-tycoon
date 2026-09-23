@@ -28,11 +28,18 @@
 html {
   overflow-x: hidden;
   width: 100%;
+  /* overflow-x:hidden stops programmatic/wheel scroll, but mobile Safari's
+     elastic touch-drag rubber-band can still visibly bounce sideways on a
+     swipe even with no real overflow. touch-action tells the browser to
+     only ever treat touch drags as vertical panning, which is the more
+     direct fix for that specific symptom. */
+  touch-action: pan-y;
 }
 
 body {
   margin: 0;
   width: 100%;
+  touch-action: pan-y;
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
   background: var(--bg);
   color: var(--fg);
