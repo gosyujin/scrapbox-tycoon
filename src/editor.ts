@@ -93,21 +93,37 @@ export class Editor {
     return el;
   }
 
-  private caretRow(ta: HTMLTextAreaElement): { row: number; totalRows: number } {
+  private lineHeightOf(ta: HTMLTextAreaElement): number {
     const cs = getComputedStyle(ta);
-    const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2;
-    if (lineHeight <= 0) return { row: 0, totalRows: 1 };
+    return parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2;
+  }
 
+  // Which visual row (0-based) a character offset falls on, via the mirror.
+  private rowOfPosition(ta: HTMLTextAreaElement, pos: number, lineHeight: number): number {
     const mirror = this.getMirror(ta);
-    const caretPos = ta.selectionStart ?? 0;
+    mirror.textContent = ta.value.slice(0, pos) || '​';
+    return Math.max(0, Math.round(mirror.scrollHeight / lineHeight) - 1);
+  }
 
-    mirror.textContent = ta.value.slice(0, caretPos) || '​';
-    const beforeHeight = mirror.scrollHeight;
-    mirror.textContent = ta.value || '​';
-    const totalHeight = mirror.scrollHeight;
+  // First character offset belonging to `targetRow` (binary search: row
+  // index is monotonically non-decreasing as the offset increases).
+  private rowStartOffset(ta: HTMLTextAreaElement, lineHeight: number, targetRow: number): number {
+    if (targetRow <= 0) return 0;
+    let lo = 0;
+    let hi = ta.value.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.rowOfPosition(ta, mid, lineHeight) < targetRow) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
 
-    const row = Math.max(0, Math.round(beforeHeight / lineHeight) - 1);
-    const totalRows = Math.max(1, Math.round(totalHeight / lineHeight));
+  private caretRow(ta: HTMLTextAreaElement): { row: number; totalRows: number } {
+    const lineHeight = this.lineHeightOf(ta);
+    if (lineHeight <= 0) return { row: 0, totalRows: 1 };
+    const row = this.rowOfPosition(ta, ta.selectionStart ?? 0, lineHeight);
+    const totalRows = this.rowOfPosition(ta, ta.value.length, lineHeight) + 1;
     return { row, totalRows };
   }
 
@@ -120,17 +136,71 @@ export class Editor {
     return row >= totalRows - 1;
   }
 
+  // Moves the caret up/down one visual row *within* the current line's
+  // (possibly wrapped) text, preserving column. Used by Ctrl+N/P, which —
+  // unlike plain Arrow keys — cannot be left to the browser/OS's native
+  // handling: it is not reliably bound to line-down/up movement inside a
+  // <textarea> across browsers, and on some platforms produces surprising
+  // results (jumping to the end of the field) instead.
+  private moveRowWithin(ta: HTMLTextAreaElement, direction: 1 | -1): void {
+    const lineHeight = this.lineHeightOf(ta);
+    if (lineHeight <= 0) return;
+    const pos = ta.selectionStart ?? 0;
+    const curRow = this.rowOfPosition(ta, pos, lineHeight);
+    const column = pos - this.rowStartOffset(ta, lineHeight, curRow);
+    const targetRow = curRow + direction;
+    const totalRows = this.rowOfPosition(ta, ta.value.length, lineHeight) + 1;
+    const targetRowStart = this.rowStartOffset(ta, lineHeight, targetRow);
+    const targetRowEnd = targetRow < totalRows - 1 ? this.rowStartOffset(ta, lineHeight, targetRow + 1) : ta.value.length;
+    const pos2 = Math.min(targetRowStart + column, targetRowEnd);
+    ta.setSelectionRange(pos2, pos2);
+  }
+
+  // Crosses into an adjacent *logical* line, landing on whichever of its
+  // visual rows is adjacent to where the caret left off (its last row when
+  // moving up into it, first row when moving down into it), preserving
+  // column within that row. Column is measured relative to the *current*
+  // row's start, not the absolute character offset — using the raw offset
+  // would, on a long wrapped line, often overshoot a short target line and
+  // always land at its very end.
   private moveToLine(fromIndex: number, ta: HTMLTextAreaElement, toIndex: number): void {
-    const caretOffset = ta.selectionStart ?? 0;
+    const lineHeight = this.lineHeightOf(ta);
+    const pos = ta.selectionStart ?? 0;
+    const column = lineHeight > 0 ? pos - this.rowStartOffset(ta, lineHeight, this.rowOfPosition(ta, pos, lineHeight)) : pos;
+
     this.commit(fromIndex, ta.value);
     this.editingIndex = toIndex;
     this.render();
     const target = this.container.querySelector<HTMLTextAreaElement>('textarea');
-    if (target) {
-      target.focus();
-      const pos = Math.min(caretOffset, target.value.length);
-      target.setSelectionRange(pos, pos);
+    if (!target) return;
+    target.focus();
+
+    const targetLineHeight = this.lineHeightOf(target);
+    if (targetLineHeight <= 0) {
+      const pos2 = Math.min(column, target.value.length);
+      target.setSelectionRange(pos2, pos2);
+      return;
     }
+    const targetTotalRows = this.rowOfPosition(target, target.value.length, targetLineHeight) + 1;
+    const targetRow = toIndex < fromIndex ? targetTotalRows - 1 : 0; // entering from below vs. above
+    const targetRowStart = this.rowStartOffset(target, targetLineHeight, targetRow);
+    const targetRowEnd = targetRow < targetTotalRows - 1 ? this.rowStartOffset(target, targetLineHeight, targetRow + 1) : target.value.length;
+    const pos2 = Math.min(targetRowStart + column, targetRowEnd);
+    target.setSelectionRange(pos2, pos2);
+  }
+
+  // Crosses into an adjacent logical line at its very start/end — used by
+  // Left/Right and Ctrl+B/F, which move character-by-character rather than
+  // by visual row.
+  private moveToLineEdge(fromIndex: number, ta: HTMLTextAreaElement, toIndex: number, edge: 'start' | 'end'): void {
+    this.commit(fromIndex, ta.value);
+    this.editingIndex = toIndex;
+    this.render();
+    const target = this.container.querySelector<HTMLTextAreaElement>('textarea');
+    if (!target) return;
+    target.focus();
+    const pos = edge === 'start' ? 0 : target.value.length;
+    target.setSelectionRange(pos, pos);
   }
 
   private buildTextarea(i: number, text: string): HTMLTextAreaElement {
@@ -179,26 +249,36 @@ export class Editor {
         this.render();
         const prev = this.container.querySelector<HTMLTextAreaElement>('textarea');
         if (prev) prev.setSelectionRange(prev.value.length, prev.value.length);
-      } else if ((e.key === 'ArrowUp' || (e.ctrlKey && e.key.toLowerCase() === 'p')) && i > 0 && this.caretAtTopRow(ta)) {
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'p') {
+        // Ctrl+P is not reliably native line-up movement in a <textarea>
+        // across browsers/platforms, so it is handled entirely ourselves
+        // rather than partly delegated like plain ArrowUp is.
+        e.preventDefault();
+        if (i > 0 && this.caretAtTopRow(ta)) this.moveToLine(i, ta, i - 1);
+        else this.moveRowWithin(ta, -1);
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        if (i < this.lines.length - 1 && this.caretAtBottomRow(ta)) this.moveToLine(i, ta, i + 1);
+        else this.moveRowWithin(ta, 1);
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        const pos = ta.selectionStart ?? 0;
+        if (pos > 0) ta.setSelectionRange(pos - 1, pos - 1);
+        else if (i > 0) this.moveToLineEdge(i, ta, i - 1, 'end');
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        const pos = ta.selectionEnd ?? ta.value.length;
+        if (pos < ta.value.length) ta.setSelectionRange(pos + 1, pos + 1);
+        else if (i < this.lines.length - 1) this.moveToLineEdge(i, ta, i + 1, 'start');
+      } else if (e.key === 'ArrowUp' && i > 0 && this.caretAtTopRow(ta)) {
         e.preventDefault();
         this.moveToLine(i, ta, i - 1);
-      } else if (
-        (e.key === 'ArrowDown' || (e.ctrlKey && e.key.toLowerCase() === 'n')) &&
-        i < this.lines.length - 1 &&
-        this.caretAtBottomRow(ta)
-      ) {
+      } else if (e.key === 'ArrowDown' && i < this.lines.length - 1 && this.caretAtBottomRow(ta)) {
         e.preventDefault();
         this.moveToLine(i, ta, i + 1);
       } else if (e.key === 'ArrowLeft' && i > 0 && ta.selectionStart === 0 && ta.selectionEnd === 0) {
         e.preventDefault();
-        this.commit(i, ta.value);
-        this.editingIndex = i - 1;
-        this.render();
-        const prev = this.container.querySelector<HTMLTextAreaElement>('textarea');
-        if (prev) {
-          prev.focus();
-          prev.setSelectionRange(prev.value.length, prev.value.length);
-        }
+        this.moveToLineEdge(i, ta, i - 1, 'end');
       } else if (
         e.key === 'ArrowRight' &&
         i < this.lines.length - 1 &&
@@ -206,14 +286,7 @@ export class Editor {
         ta.selectionEnd === ta.value.length
       ) {
         e.preventDefault();
-        this.commit(i, ta.value);
-        this.editingIndex = i + 1;
-        this.render();
-        const next = this.container.querySelector<HTMLTextAreaElement>('textarea');
-        if (next) {
-          next.focus();
-          next.setSelectionRange(0, 0);
-        }
+        this.moveToLineEdge(i, ta, i + 1, 'start');
       }
     });
 
