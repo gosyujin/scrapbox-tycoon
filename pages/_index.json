@@ -28,5 +28,10 @@
     "title": "すま",
     "path": "pages/すま.json",
     "updated": 1790119542
+  },
+  {
+    "title": "スマホ",
+    "path": "pages/スマホ.json",
+    "updated": 1790122755
   }
 ]
