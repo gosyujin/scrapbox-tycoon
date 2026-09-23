@@ -204,6 +204,23 @@ body {
   white-space: nowrap;
 }
 
+.sort-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sort-select {
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+}
+
 .page-list { list-style: none; padding: 0; }
 .page-list li {
   display: flex;

@@ -12,11 +12,44 @@ import {
   searchPages as searchReferencePages,
   getBacklinks as getReferenceBacklinksRaw,
   getAllTitlesLowercased as getReferenceTitles,
+  type SortKey as ReferenceSortKey,
 } from './store/reference-store.js';
+import { makeVisitTracker } from './visit-tracking.js';
 import type { Page, Store, SyncCapable, SyncStatus } from './types.js';
 
 function getReferenceBacklinks(title: string): Promise<string[]> {
   return getReferenceBacklinksRaw(title, extractLinks);
+}
+
+// Device-local only (see visit-tracking.ts) -- separate namespaces so a
+// title that happens to exist in both the editable notes and the
+// reference project doesn't share stats between the two.
+const noteVisits = makeVisitTracker('scrapbox_tycoon_visits_v1');
+const refVisits = makeVisitTracker('scrapbox_tycoon_ref_visits_v1');
+
+type NoteSortKey = 'modified' | 'created' | 'lastVisited' | 'linked' | 'viewed' | 'title';
+const NOTE_SORT_LABELS: Record<NoteSortKey, string> = {
+  modified: 'Modified',
+  created: 'Created',
+  lastVisited: 'Last visited',
+  linked: 'Most linked',
+  viewed: 'Most viewed',
+  title: 'Title',
+};
+const REF_SORT_LABELS: Record<ReferenceSortKey, string> = {
+  modified: 'Modified',
+  created: 'Created',
+  lastVisited: 'Last visited',
+  linked: 'Most linked',
+  viewed: 'Most viewed',
+  title: 'Title',
+};
+
+function sortSelectHtml(id: string, labels: Record<string, string>, current: string): string {
+  const options = Object.entries(labels)
+    .map(([value, label]) => `<option value="${value}" ${value === current ? 'selected' : ''}>${escapeHtml(label)}</option>`)
+    .join('');
+  return `<select id="${id}" class="sort-select">${options}</select>`;
 }
 
 const SETTINGS_KEY = 'scrapbox_tycoon_settings_v1';
@@ -231,6 +264,74 @@ function wireDebouncedSearch(input: HTMLInputElement, onSearch: (query: string) 
 
 const HOME_REF_LIMIT = 30;
 
+let homeNoteSort: NoteSortKey = 'modified';
+let homeRefSort: ReferenceSortKey = 'modified';
+
+interface NoteRow {
+  title: string;
+  created: number;
+  updated: number;
+}
+
+async function loadNoteRows(query: string): Promise<NoteRow[]> {
+  const q = query.trim().toLowerCase();
+  const summaries = await store.listPages();
+  const rows: NoteRow[] = [];
+  for (const s of summaries) {
+    const full = await store.getPage(s.title);
+    if (!full) continue;
+    if (q) {
+      const matches = full.title.toLowerCase().includes(q) || full.lines.some((l) => l.toLowerCase().includes(q));
+      if (!matches) continue;
+    }
+    rows.push({ title: full.title, created: full.created, updated: full.updated });
+  }
+  return rows;
+}
+
+// One full-content pass tallying how many *other* notes link to each note
+// -- cheap enough for a personal note set to just recompute on demand
+// rather than maintaining a persistent index (contrast reference-store's
+// precomputed linkedCount, needed there because the reference project can
+// run into the thousands of pages).
+async function computeNoteLinkCounts(): Promise<Map<string, number>> {
+  const summaries = await store.listPages();
+  const counts = new Map<string, number>();
+  for (const { title } of summaries) counts.set(title.toLowerCase(), 0);
+  for (const { title } of summaries) {
+    const page = await store.getPage(title);
+    if (!page) continue;
+    const seen = new Set<string>();
+    for (const line of page.lines) {
+      for (const link of extractLinks(line)) {
+        const key = link.toLowerCase();
+        if (key === title.toLowerCase() || !counts.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+  }
+  return counts;
+}
+
+function compareNoteRows(sort: NoteSortKey, linkCounts: Map<string, number> | null): (a: NoteRow, b: NoteRow) => number {
+  switch (sort) {
+    case 'created':
+      return (a, b) => b.created - a.created;
+    case 'title':
+      return (a, b) => a.title.localeCompare(b.title);
+    case 'lastVisited':
+      return (a, b) => noteVisits.getStats(b.title).lastVisited - noteVisits.getStats(a.title).lastVisited;
+    case 'viewed':
+      return (a, b) => noteVisits.getStats(b.title).views - noteVisits.getStats(a.title).views;
+    case 'linked':
+      return (a, b) => (linkCounts?.get(b.title.toLowerCase()) ?? 0) - (linkCounts?.get(a.title.toLowerCase()) ?? 0);
+    case 'modified':
+    default:
+      return (a, b) => b.updated - a.updated;
+  }
+}
+
 async function renderPageList(query = ''): Promise<void> {
   // Only a debounced re-render triggered by typing in #quick-open should
   // restore focus/caret afterward -- app.innerHTML below destroys the old
@@ -238,25 +339,17 @@ async function renderPageList(query = ''): Promise<void> {
   // navigation to #/ should not steal focus and pop the keyboard.
   const hadFocus = (document.activeElement as HTMLElement | null)?.id === 'quick-open';
 
-  const q = query.trim().toLowerCase();
-  let pages = await store.listPages();
-  if (q) {
-    const matched: typeof pages = [];
-    for (const p of pages) {
-      if (p.title.toLowerCase().includes(q)) {
-        matched.push(p);
-        continue;
-      }
-      const full = await store.getPage(p.title);
-      if (full && full.lines.some((line) => line.toLowerCase().includes(q))) matched.push(p);
-    }
-    pages = matched;
-  }
+  let rows = await loadNoteRows(query);
+  const linkCounts = homeNoteSort === 'linked' ? await computeNoteLinkCounts() : null;
+  rows = rows.slice().sort(compareNoteRows(homeNoteSort, linkCounts));
 
   const refMeta = await getReferenceMeta();
   let refSection = '';
   if (refMeta) {
-    const { summaries, total } = query ? await searchReferencePages(query, HOME_REF_LIMIT) : { summaries: [], total: refMeta.pageCount };
+    const getVisitedAt = (title: string) => refVisits.getStats(title).lastVisited;
+    const { summaries, total } = query
+      ? await searchReferencePages(query, HOME_REF_LIMIT, homeRefSort, getVisitedAt)
+      : await listReferencePages(HOME_REF_LIMIT, homeRefSort, getVisitedAt);
     const listHtml =
       summaries
         .map(
@@ -272,17 +365,26 @@ async function renderPageList(query = ''): Promise<void> {
     refSection = `
       <section class="home-ref-section">
         <h2>参照プロジェクト (${total}) <a class="muted-link" href="#/ref">全件を見る →</a></h2>
-        ${query ? `<ul class="page-list">${listHtml}</ul>${moreNote}` : '<p class="muted">検索すると本文も含めて絞り込めます。</p>'}
+        <div class="sort-bar">
+          <label for="home-ref-sort">並び替え</label>
+          ${sortSelectHtml('home-ref-sort', REF_SORT_LABELS, homeRefSort)}
+        </div>
+        <ul class="page-list">${listHtml}</ul>
+        ${moreNote}
       </section>`;
   }
 
   app.innerHTML = `
     ${topBar()}
     <div class="content">
-      <h1>ページ一覧 (${pages.length})</h1>
+      <h1>ページ一覧 (${rows.length})</h1>
+      <div class="sort-bar">
+        <label for="home-note-sort">並び替え</label>
+        ${sortSelectHtml('home-note-sort', NOTE_SORT_LABELS, homeNoteSort)}
+      </div>
       <ul class="page-list">
         ${
-          pages
+          rows
             .map(
               (p) =>
                 `<li><a href="#/page/${encodeURIComponent(p.title)}">${escapeHtml(p.title)}</a>
@@ -303,6 +405,15 @@ async function renderPageList(query = ''): Promise<void> {
     input.focus();
     input.setSelectionRange(query.length, query.length);
   }
+
+  document.getElementById('home-note-sort')?.addEventListener('change', (e) => {
+    homeNoteSort = (e.target as HTMLSelectElement).value as NoteSortKey;
+    void renderPageList(query);
+  });
+  document.getElementById('home-ref-sort')?.addEventListener('change', (e) => {
+    homeRefSort = (e.target as HTMLSelectElement).value as ReferenceSortKey;
+    void renderPageList(query);
+  });
 }
 
 // Scrapbox's own behavior when a rename collides with an existing page: ask
@@ -318,6 +429,7 @@ async function renderPage(title: string): Promise<void> {
   const existing = await store.getPage(title);
   const isNew = !existing;
   const page: Page = existing || { title, lines: [title], created: 0, updated: 0 };
+  if (!isNew) noteVisits.recordVisit(title);
 
   const mergeBanner = page.mergeCandidate
     ? `<div class="merge-banner">
@@ -440,6 +552,7 @@ async function renderBacklinks(title: string): Promise<void> {
 }
 
 const REFERENCE_LIST_LIMIT = 200;
+let refListSort: ReferenceSortKey = 'modified';
 
 function referenceBanner(meta: { projectName: string; importedAt: number }): string {
   return `<p class="ref-banner">読み取り専用: ${escapeHtml(meta.projectName)} のスナップショット（${new Date(
@@ -466,7 +579,10 @@ async function renderReferenceList(query = ''): Promise<void> {
     return;
   }
 
-  const { summaries, total } = query ? await searchReferencePages(query, REFERENCE_LIST_LIMIT) : await listReferencePages(REFERENCE_LIST_LIMIT);
+  const getVisitedAt = (title: string) => refVisits.getStats(title).lastVisited;
+  const { summaries, total } = query
+    ? await searchReferencePages(query, REFERENCE_LIST_LIMIT, refListSort, getVisitedAt)
+    : await listReferencePages(REFERENCE_LIST_LIMIT, refListSort, getVisitedAt);
   const truncatedNote =
     total > summaries.length ? `<p class="muted">先頭${summaries.length}件のみ表示中（全${total}件）。検索で絞り込めます。</p>` : '';
 
@@ -476,6 +592,10 @@ async function renderReferenceList(query = ''): Promise<void> {
       ${referenceBanner(meta)}
       <h1>参照ページ一覧 (${total})</h1>
       <input id="ref-search" class="quick-open" placeholder="検索（タイトル・本文）" value="${escapeAttr(query)}">
+      <div class="sort-bar">
+        <label for="ref-list-sort">並び替え</label>
+        ${sortSelectHtml('ref-list-sort', REF_SORT_LABELS, refListSort)}
+      </div>
       ${truncatedNote}
       <ul class="page-list">
         ${
@@ -499,6 +619,10 @@ async function renderReferenceList(query = ''): Promise<void> {
     searchInput.focus();
     searchInput.setSelectionRange(query.length, query.length);
   }
+  document.getElementById('ref-list-sort')?.addEventListener('change', (e) => {
+    refListSort = (e.target as HTMLSelectElement).value as ReferenceSortKey;
+    void renderReferenceList(query);
+  });
 }
 
 async function renderReferencePage(title: string): Promise<void> {
@@ -515,6 +639,7 @@ async function renderReferencePage(title: string): Promise<void> {
     wireQuickOpen();
     return;
   }
+  refVisits.recordVisit(title);
 
   app.innerHTML = `
     ${topBar()}

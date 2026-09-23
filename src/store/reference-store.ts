@@ -15,6 +15,11 @@ export interface ReferencePage {
   created: number;
   updated: number;
   views: number;
+  // How many other pages in this same snapshot link to this one.
+  // Precomputed at import time from the export's linksLc field (mirrors
+  // scrapbox-pwa-viewer's build-time backlink pass) rather than scanning
+  // all ~10k pages' content on every "Most linked" sort.
+  linkedCount: number;
 }
 
 export interface ReferenceMeta {
@@ -32,6 +37,7 @@ interface RawPage {
   created?: number;
   updated?: number;
   views?: number;
+  linksLc?: string[];
 }
 interface RawExport {
   name?: string;
@@ -79,19 +85,37 @@ export async function importExport(json: string): Promise<ReferenceMeta> {
   const rawPages = data.pages || [];
   const now = Math.floor(Date.now() / 1000);
 
+  const titles = rawPages.map((p, i) => p.title || (p.lines && normalizeLines(p.lines, '')[0]) || `Untitled${i}`);
+  const knownLc = new Set(titles.map((t) => t.toLowerCase()));
+  // Only counts a link toward "Most linked" when its target is an actual
+  // page in this same snapshot -- matches build.py's backlink pass, which
+  // looks the target up in title_to_page rather than counting every raw
+  // linksLc entry.
+  const linkedCount = new Map<string, number>();
+  for (const p of rawPages) {
+    const seen = new Set<string>();
+    for (const lc of p.linksLc || []) {
+      if (!knownLc.has(lc) || seen.has(lc)) continue;
+      seen.add(lc);
+      linkedCount.set(lc, (linkedCount.get(lc) ?? 0) + 1);
+    }
+  }
+
   const db = await openDb();
   const tx = db.transaction([PAGES_STORE, META_STORE], 'readwrite');
   const pagesStore = tx.objectStore(PAGES_STORE);
   pagesStore.clear();
   let count = 0;
-  for (const p of rawPages) {
-    const title = p.title || (p.lines && normalizeLines(p.lines, '')[0]) || 'Untitled';
+  for (let i = 0; i < rawPages.length; i++) {
+    const p = rawPages[i]!;
+    const title = titles[i]!;
     const page: ReferencePage = {
       title,
       lines: normalizeLines(p.lines, title),
       created: p.created ?? now,
       updated: p.updated ?? now,
       views: p.views ?? 0,
+      linkedCount: linkedCount.get(title.toLowerCase()) ?? 0,
     };
     pagesStore.put(page);
     count++;
@@ -135,6 +159,36 @@ export async function getPage(title: string): Promise<ReferencePage | null> {
 export interface ReferenceSummary {
   title: string;
   updated: number;
+  created: number;
+  views: number;
+  linkedCount: number;
+}
+
+export type SortKey = 'modified' | 'created' | 'linked' | 'viewed' | 'title' | 'lastVisited';
+
+// "lastVisited" has no field on ReferencePage -- it's purely device-local
+// (see visit-tracking.ts) -- so its value is looked up through
+// getVisitedAt rather than read off the record like the others.
+function compareBy(sort: SortKey, getVisitedAt: (title: string) => number): (a: ReferencePage, b: ReferencePage) => number {
+  switch (sort) {
+    case 'created':
+      return (a, b) => b.created - a.created;
+    case 'linked':
+      return (a, b) => b.linkedCount - a.linkedCount;
+    case 'viewed':
+      return (a, b) => b.views - a.views;
+    case 'title':
+      return (a, b) => a.title.localeCompare(b.title);
+    case 'lastVisited':
+      return (a, b) => getVisitedAt(b.title) - getVisitedAt(a.title);
+    case 'modified':
+    default:
+      return (a, b) => b.updated - a.updated;
+  }
+}
+
+function toSummary(p: ReferencePage): ReferenceSummary {
+  return { title: p.title, updated: p.updated, created: p.created, views: p.views, linkedCount: p.linkedCount };
 }
 
 // A single cursor pass over every page. 10k pages / a few MB of text is
@@ -174,20 +228,29 @@ export async function getAllTitlesLowercased(): Promise<Set<string>> {
   return new Set(keys.map((k) => String(k).toLowerCase()));
 }
 
-export async function listPages(limit: number): Promise<{ summaries: ReferenceSummary[]; total: number }> {
+export async function listPages(
+  limit: number,
+  sort: SortKey = 'modified',
+  getVisitedAt: (title: string) => number = () => 0
+): Promise<{ summaries: ReferenceSummary[]; total: number }> {
   const all = await scanAll();
-  all.sort((a, b) => b.updated - a.updated);
-  return { summaries: all.slice(0, limit).map((p) => ({ title: p.title, updated: p.updated })), total: all.length };
+  all.sort(compareBy(sort, getVisitedAt));
+  return { summaries: all.slice(0, limit).map(toSummary), total: all.length };
 }
 
 // Naive substring match across title + body.
-export async function searchPages(query: string, limit: number): Promise<{ summaries: ReferenceSummary[]; total: number }> {
+export async function searchPages(
+  query: string,
+  limit: number,
+  sort: SortKey = 'modified',
+  getVisitedAt: (title: string) => number = () => 0
+): Promise<{ summaries: ReferenceSummary[]; total: number }> {
   const q = query.trim().toLowerCase();
-  if (!q) return listPages(limit);
+  if (!q) return listPages(limit, sort, getVisitedAt);
   const all = await scanAll();
   const hits = all.filter((p) => (p.title + '\n' + p.lines.join('\n')).toLowerCase().includes(q));
-  hits.sort((a, b) => b.updated - a.updated);
-  return { summaries: hits.slice(0, limit).map((p) => ({ title: p.title, updated: p.updated })), total: hits.length };
+  hits.sort(compareBy(sort, getVisitedAt));
+  return { summaries: hits.slice(0, limit).map(toSummary), total: hits.length };
 }
 
 export async function getBacklinks(title: string, extractLinks: (line: string) => string[]): Promise<string[]> {
