@@ -34,8 +34,13 @@ export function extractLinks(text: string): string[] {
   return links;
 }
 
-// Renders a single line of Scrapbox notation to safe HTML.
-export function renderLine(text: string): string {
+// Renders a single line of Scrapbox notation to safe HTML. `linkBase` picks
+// where internal links/tags point: the editable notes route by default, or
+// the read-only reference-project route (see reference-store.ts) when
+// rendering an imported page, so following a link there stays inside that
+// same separate, read-only page set instead of opening/creating an
+// editable note of the same title.
+export function renderLine(text: string, linkBase = '#/page/'): string {
   if (text.length === 0) return '<br>';
 
   // Tokenize left-to-right so we don't double-process nested brackets.
@@ -55,7 +60,7 @@ export function renderLine(text: string): string {
       const end = text.indexOf(']', i + 1);
       if (end !== -1) {
         const content = text.slice(i + 1, end).trim();
-        out += renderBracket(content);
+        out += renderBracket(content, linkBase);
         i = end + 1;
         continue;
       }
@@ -64,7 +69,7 @@ export function renderLine(text: string): string {
       const m = /^#(\S+)/.exec(text.slice(i));
       if (m) {
         const tag = m[1]!;
-        out += `<a class="link tag" href="#/page/${encodeURIComponent(tag)}">#${escapeHtml(tag)}</a>`;
+        out += `<a class="link tag" href="${linkBase}${encodeURIComponent(tag)}">#${escapeHtml(tag)}</a>`;
         i += m[0].length;
         continue;
       }
@@ -93,7 +98,7 @@ export function splitIndent(text: string): IndentedLine {
   return { depth, content: text.slice(depth) };
 }
 
-function renderBracket(content: string): string {
+function renderBracket(content: string, linkBase: string): string {
   if (URL_RE.test(content)) {
     return `<a class="link external" href="${escapeHtml(content)}" target="_blank" rel="noopener noreferrer">${escapeHtml(content)}</a>`;
   }
@@ -103,5 +108,31 @@ function renderBracket(content: string): string {
     const label = content.slice(url.length).trim() || url;
     return `<a class="link external" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
   }
-  return `<a class="link internal" href="#/page/${encodeURIComponent(content)}">${escapeHtml(content)}</a>`;
+  return `<a class="link internal" href="${linkBase}${encodeURIComponent(content)}">${escapeHtml(content)}</a>`;
+}
+
+// Shared by the editable-page view (editor.ts) and the read-only
+// reference-page view (app.ts): renders a title + outline-indented body
+// into `container`, replacing its current contents.
+export function renderLinesInto(container: HTMLElement, lines: string[], linkBase = '#/page/'): void {
+  container.innerHTML = '';
+  lines.forEach((text, i) => {
+    const div = document.createElement('div');
+    if (i === 0) {
+      // The title line is never indented, matching Scrapbox.
+      div.className = 'line-view line-title';
+      div.innerHTML = renderLine(text, linkBase);
+      container.appendChild(div);
+      return;
+    }
+    const { depth, content } = splitIndent(text);
+    div.className = 'line-view';
+    if (depth > 0) {
+      div.style.paddingLeft = `${0.6 + depth * 1.2}em`;
+      div.innerHTML = `<span class="indent-bullet">•</span>${renderLine(content, linkBase)}`;
+    } else {
+      div.innerHTML = renderLine(content, linkBase);
+    }
+    container.appendChild(div);
+  });
 }

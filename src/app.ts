@@ -1,9 +1,22 @@
 import { LocalStore } from './store/local-store.js';
 import { GitHubSyncStore } from './store/github-sync-store.js';
 import { Editor } from './editor.js';
-import { extractLinks } from './parser.js';
+import { extractLinks, renderLinesInto } from './parser.js';
 import { parseScrapboxExport, buildScrapboxExport } from './scrapbox-format.js';
+import {
+  importExport as importReferenceExport,
+  clearAll as clearReference,
+  getMeta as getReferenceMeta,
+  getPage as getReferencePage,
+  listPages as listReferencePages,
+  searchPages as searchReferencePages,
+  getBacklinks as getReferenceBacklinksRaw,
+} from './store/reference-store.js';
 import type { Page, Store, SyncCapable, SyncStatus } from './types.js';
+
+function getReferenceBacklinks(title: string): Promise<string[]> {
+  return getReferenceBacklinksRaw(title, extractLinks);
+}
 
 const SETTINGS_KEY = 'scrapbox_tycoon_settings_v1';
 
@@ -119,10 +132,15 @@ async function route(): Promise<void> {
   if (hash === '#/' || hash === '') {
     await renderPageList();
   } else if (hash === '#/settings') {
-    renderSettings();
+    await renderSettings();
   } else if (hash.startsWith('#/page/')) {
     const title = decodeURIComponent(hash.slice('#/page/'.length));
     await renderPage(title);
+  } else if (hash === '#/ref' || hash === '#/ref/') {
+    await renderReferenceList();
+  } else if (hash.startsWith('#/ref/')) {
+    const title = decodeURIComponent(hash.slice('#/ref/'.length));
+    await renderReferencePage(title);
   } else {
     app.innerHTML = '<p>Not found</p>';
   }
@@ -141,6 +159,7 @@ function topBar(): string {
         <input id="quick-open" class="quick-open" placeholder="ページを開く/作成 (Enter)" />
       </div>
       <nav>
+        <a href="#/ref">参照</a>
         <a href="#/settings">設定</a>
       </nav>
     </div>`;
@@ -322,11 +341,123 @@ async function renderBacklinks(title: string): Promise<void> {
     '<li class="muted">なし</li>';
 }
 
-function renderSettings(): void {
+const REFERENCE_LIST_LIMIT = 200;
+
+function referenceBanner(meta: { projectName: string; importedAt: number }): string {
+  return `<p class="ref-banner">読み取り専用: ${escapeHtml(meta.projectName)} のスナップショット（${new Date(
+    meta.importedAt * 1000
+  ).toLocaleString()}時点）</p>`;
+}
+
+async function renderReferenceList(query = ''): Promise<void> {
+  // Only the debounced re-render triggered by typing in #ref-search should
+  // restore focus/caret afterward -- app.innerHTML below destroys the old
+  // input, so this has to be captured before that happens. A plain
+  // navigation to #/ref should not steal focus and pop the keyboard.
+  const hadSearchFocus = (document.activeElement as HTMLElement | null)?.id === 'ref-search';
+
+  const meta = await getReferenceMeta();
+  if (!meta) {
+    app.innerHTML = `
+      ${topBar()}
+      <div class="content">
+        <h1>参照プロジェクト</h1>
+        <p class="muted">まだインポートされていません。設定画面からScrapboxのエクスポートJSONを読み込んでください。</p>
+      </div>`;
+    wireQuickOpen();
+    return;
+  }
+
+  const { summaries, total } = query ? await searchReferencePages(query, REFERENCE_LIST_LIMIT) : await listReferencePages(REFERENCE_LIST_LIMIT);
+  const truncatedNote =
+    total > summaries.length ? `<p class="muted">先頭${summaries.length}件のみ表示中（全${total}件）。検索で絞り込めます。</p>` : '';
+
+  app.innerHTML = `
+    ${topBar()}
+    <div class="content">
+      ${referenceBanner(meta)}
+      <h1>参照ページ一覧 (${total})</h1>
+      <input id="ref-search" class="quick-open" placeholder="検索（タイトル・本文）" value="${escapeAttr(query)}">
+      ${truncatedNote}
+      <ul class="page-list">
+        ${
+          summaries
+            .map(
+              (p) =>
+                `<li><a href="#/ref/${encodeURIComponent(p.title)}">${escapeHtml(p.title)}</a>
+              <span class="muted">${new Date(p.updated * 1000).toLocaleString()}</span></li>`
+            )
+            .join('') || '<li class="muted">一致するページがありません。</li>'
+        }
+      </ul>
+    </div>`;
+  wireQuickOpen();
+
+  const searchInput = document.getElementById('ref-search') as HTMLInputElement;
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    const q = searchInput.value;
+    debounceTimer = setTimeout(() => void renderReferenceList(q), 250);
+  });
+  if (hadSearchFocus) {
+    // Typing moves the caret to the end of the freshly-rendered input by
+    // default; keep it where the user left it instead.
+    searchInput.focus();
+    searchInput.setSelectionRange(query.length, query.length);
+  }
+}
+
+async function renderReferencePage(title: string): Promise<void> {
+  const meta = await getReferenceMeta();
+  const page = meta ? await getReferencePage(title) : null;
+
+  if (!meta || !page) {
+    app.innerHTML = `
+      ${topBar()}
+      <div class="content">
+        <p class="muted">${meta ? `ページが見つかりません: ${escapeHtml(title)}` : '参照プロジェクトが未インポートです。'}</p>
+        <p><a href="#/ref">参照一覧に戻る</a></p>
+      </div>`;
+    wireQuickOpen();
+    return;
+  }
+
+  app.innerHTML = `
+    ${topBar()}
+    <div class="content page-content">
+      ${referenceBanner(meta)}
+      <div id="ref-view"></div>
+      <section class="linked">
+        <h3 id="ref-linked-heading">逆リンク</h3>
+        <ul id="ref-backlinks" class="muted">読み込み中...</ul>
+      </section>
+    </div>`;
+  wireQuickOpen();
+
+  const viewEl = document.getElementById('ref-view') as HTMLElement;
+  renderLinesInto(viewEl, page.lines, '#/ref/');
+
+  const hits = await getReferenceBacklinks(title);
+  const headingEl = document.getElementById('ref-linked-heading') as HTMLElement;
+  const listEl = document.getElementById('ref-backlinks') as HTMLElement;
+  headingEl.textContent = `逆リンク (${hits.length})`;
+  listEl.className = '';
+  listEl.innerHTML =
+    hits.map((t) => `<li><a href="#/ref/${encodeURIComponent(t)}">${escapeHtml(t)}</a></li>`).join('') ||
+    '<li class="muted">なし</li>';
+}
+
+async function renderSettings(): Promise<void> {
   const syncSection = isSyncCapable(store)
     ? `<p class="muted" id="sync-status-line">${escapeHtml(describeSyncStatus(store.getSyncStatus()))}</p>
        <button id="sync-now">今すぐ同期</button>`
     : '';
+
+  const refMeta = await getReferenceMeta();
+  const refStatus = refMeta
+    ? `${escapeHtml(refMeta.projectName)} / ${refMeta.pageCount}ページ / ${new Date(refMeta.importedAt * 1000).toLocaleString()}時点`
+    : '未インポートです';
 
   app.innerHTML = `
     ${topBar()}
@@ -351,6 +482,18 @@ function renderSettings(): void {
       <label>Scrapboxからエクスポートした .json を読み込む <input id="import-file" type="file" accept="application/json"></label>
       <button id="export-btn">現在のページを Scrapbox JSON としてダウンロード</button>
       <p id="io-status" class="muted"></p>
+
+      <hr>
+      <h2>参照プロジェクト（Scrapboxエクスポートの読み取り専用スナップショット）</h2>
+      <p class="muted">
+        自分で編集するノートとは別に、実際に運用しているScrapboxプロジェクトのエクスポートJSONを
+        丸ごと取り込んでオフラインで閲覧できます（このブラウザの中だけに保存され、どこにも送信・同期されません）。
+        再インポートすると前のスナップショットは置き換わります。
+      </p>
+      <p id="ref-status" class="muted">${refStatus}</p>
+      <label>Scrapboxからエクスポートした .json を読み込む <input id="ref-import-file" type="file" accept="application/json"></label>
+      ${refMeta ? '<button id="ref-clear-btn" class="secondary">参照データを削除</button>' : ''}
+      <p id="ref-io-status" class="muted"></p>
     </div>`;
   wireQuickOpen();
 
@@ -412,6 +555,27 @@ function renderSettings(): void {
     a.href = URL.createObjectURL(blob);
     a.download = `${json.name}.json`;
     a.click();
+  });
+
+  document.getElementById('ref-import-file')!.addEventListener('change', async (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    const status = document.getElementById('ref-io-status') as HTMLElement;
+    status.textContent = '読み込み中...（ページ数が多いと数秒かかります）';
+    try {
+      const text = await file.text();
+      const meta = await importReferenceExport(text);
+      status.textContent = `${meta.pageCount}ページを取り込みました。`;
+      await renderSettings();
+    } catch (err) {
+      status.textContent = `失敗: ${(err as Error).message}`;
+    }
+  });
+
+  document.getElementById('ref-clear-btn')?.addEventListener('click', async () => {
+    if (!confirm('参照プロジェクトのスナップショットを削除します。よろしいですか？')) return;
+    await clearReference();
+    await renderSettings();
   });
 }
 
