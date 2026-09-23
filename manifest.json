@@ -1,0 +1,9 @@
+{
+  "name": "scrapbox-tycoon",
+  "short_name": "tycoon",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff"
+}

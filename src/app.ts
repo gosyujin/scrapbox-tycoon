@@ -443,3 +443,15 @@ async function loadBuildInfo(): Promise<void> {
 
 void route();
 void loadBuildInfo();
+
+// Lets the app shell (this file, css/style.css, index.html) load with no
+// network at all after the first successful visit -- see sw.js for what it
+// caches and why. Registration failing (unsupported browser, dev server
+// quirks) should never block the app itself.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {
+      /* offline support just won't be available; nothing else to do */
+    });
+  });
+}
