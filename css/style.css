@@ -65,6 +65,30 @@ body {
   white-space: nowrap;
 }
 
+.quick-open-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.quick-add {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.quick-add:hover {
+  opacity: 0.8;
+}
+
 .quick-open {
   flex: 1;
   padding: 6px 10px;
@@ -89,7 +113,7 @@ body {
     flex-wrap: wrap;
     row-gap: 8px;
   }
-  .quick-open {
+  .quick-open-row {
     order: 3;
     flex-basis: 100%;
   }

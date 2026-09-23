@@ -114,9 +114,11 @@ function topBar(): string {
   return `
     <div class="topbar">
       <a href="#/" class="brand">scrapbox-tycoon</a>
-      <input id="quick-open" class="quick-open" placeholder="ページを開く/作成 (Enter)" />
+      <div class="quick-open-row">
+        <button id="quick-add" class="quick-add" title="ページを追加" aria-label="ページを追加">+</button>
+        <input id="quick-open" class="quick-open" placeholder="ページを開く/作成 (Enter)" />
+      </div>
       <nav>
-        <a href="#/">一覧</a>
         <a href="#/settings">設定</a>
       </nav>
     </div>`;
@@ -124,6 +126,7 @@ function topBar(): string {
 
 function wireQuickOpen(): void {
   const input = document.getElementById('quick-open') as HTMLInputElement;
+  const addBtn = document.getElementById('quick-add') as HTMLButtonElement;
   let composing = false;
   input.addEventListener('compositionstart', () => {
     composing = true;
@@ -136,6 +139,12 @@ function wireQuickOpen(): void {
     if (e.key === 'Enter' && input.value.trim()) {
       navigate(`#/page/${encodeURIComponent(input.value.trim())}`);
     }
+  });
+  // Matches Scrapbox: a title in the box opens/creates that page, empty
+  // goes to a blank new-page screen (renderPage treats "" as just another
+  // not-yet-existing title, so this needs no special case beyond that).
+  addBtn.addEventListener('click', () => {
+    navigate(`#/page/${encodeURIComponent(input.value.trim())}`);
   });
 }
 
