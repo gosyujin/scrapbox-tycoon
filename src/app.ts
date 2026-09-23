@@ -190,6 +190,45 @@ function wireQuickOpen(): void {
   });
 }
 
+// Debounces search-as-you-type without breaking IME composition. An
+// 'input' event fires on every intermediate kana/kanji candidate while
+// composing (e.g. typing "korona" toward "コロナ"); if that were allowed to
+// trigger a DOM-replacing render after the usual pause-based debounce, the
+// browser force-commits whatever partial conversion was on screen at that
+// moment, because destroying/recreating the focused element ends
+// composition -- which looked like every keystroke committing immediately
+// instead of letting IME conversion happen. Only 'compositionend' (the
+// conversion is actually confirmed) or an ordinary, non-IME 'input' is
+// allowed to schedule a search.
+function wireDebouncedSearch(input: HTMLInputElement, onSearch: (query: string) => void, delayMs = 250): void {
+  let composing = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const schedule = () => {
+    clearTimeout(timer);
+    const value = input.value;
+    timer = setTimeout(() => {
+      // A result link, or Enter opening/creating an exact-titled note, can
+      // navigate away before this fires; without this check that stale
+      // render would clobber whatever page we're now on.
+      if (!document.body.contains(input)) return;
+      onSearch(value);
+    }, delayMs);
+  };
+
+  input.addEventListener('compositionstart', () => {
+    composing = true;
+  });
+  input.addEventListener('compositionend', () => {
+    composing = false;
+    schedule();
+  });
+  input.addEventListener('input', (e) => {
+    if (composing || (e as InputEvent).isComposing) return;
+    schedule();
+  });
+}
+
 const HOME_REF_LIMIT = 30;
 
 async function renderPageList(query = ''): Promise<void> {
@@ -259,19 +298,7 @@ async function renderPageList(query = ''): Promise<void> {
 
   const input = document.getElementById('quick-open') as HTMLInputElement;
   input.value = query;
-  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-  input.addEventListener('input', () => {
-    clearTimeout(debounceTimer);
-    const nextQuery = input.value;
-    debounceTimer = setTimeout(() => {
-      // Enter (still bound to "open/create this exact title", see
-      // wireQuickOpen) or a result link can navigate away before this
-      // fires; without this check that stale render would clobber
-      // whatever page we navigated to.
-      if (!document.body.contains(input)) return;
-      void renderPageList(nextQuery);
-    }, 250);
-  });
+  wireDebouncedSearch(input, (nextQuery) => void renderPageList(nextQuery));
   if (hadFocus) {
     input.focus();
     input.setSelectionRange(query.length, query.length);
@@ -465,17 +492,7 @@ async function renderReferenceList(query = ''): Promise<void> {
   wireQuickOpen();
 
   const searchInput = document.getElementById('ref-search') as HTMLInputElement;
-  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-  searchInput.addEventListener('input', () => {
-    clearTimeout(debounceTimer);
-    const q = searchInput.value;
-    debounceTimer = setTimeout(() => {
-      // Clicking a result can navigate away before this fires; without this
-      // check that stale render would clobber whatever page we're now on.
-      if (!document.body.contains(searchInput)) return;
-      void renderReferenceList(q);
-    }, 250);
-  });
+  wireDebouncedSearch(searchInput, (q) => void renderReferenceList(q));
   if (hadSearchFocus) {
     // Typing moves the caret to the end of the freshly-rendered input by
     // default; keep it where the user left it instead.
