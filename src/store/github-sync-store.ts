@@ -188,11 +188,16 @@ export class GitHubSyncStore implements Store, SyncCapable {
   }
 
   private async pull(): Promise<void> {
-    const dirtySet = new Set(this.meta.dirty);
     const remoteEntries = await this.remote.listPages();
 
     for (const entry of remoteEntries) {
-      if (dirtySet.has(entry.title)) continue; // our local edit will win on push
+      // Checked live (not a Set snapshotted before the listPages() round
+      // trip above) so a markDirty() that lands *during* that await -- e.g.
+      // the user starts another merge while this pull is still in flight --
+      // is still honored: without this, a remote copy fetched a moment
+      // later here could overwrite that brand-new local edit before it's
+      // ever pushed.
+      if (this.meta.dirty.includes(entry.title)) continue; // our local edit will win on push
       if (this.meta.lastSyncedUpdated[entry.title] === entry.updated) continue; // unchanged
       const remotePage = await this.remote.getPage(entry.title);
       if (remotePage) {
@@ -203,7 +208,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
 
     const remoteTitles = new Set(remoteEntries.map((e) => e.title));
     for (const title of Object.keys(this.meta.lastSyncedUpdated)) {
-      if (remoteTitles.has(title) || dirtySet.has(title) || this.meta.deleted.includes(title)) continue;
+      if (remoteTitles.has(title) || this.meta.dirty.includes(title) || this.meta.deleted.includes(title)) continue;
       // Known to us before, gone from the remote now, and not something we
       // deleted ourselves -> another device deleted it.
       await this.local.deletePage(title);
@@ -212,13 +217,29 @@ export class GitHubSyncStore implements Store, SyncCapable {
   }
 
   private async push(): Promise<void> {
-    const changes: PageChange[] = [];
+    // Snapshotted up front, before any await: pushBatch() below makes
+    // several real GitHub API round trips (hundreds of ms each), and
+    // markDirty()/markDeleted() can fire again in that window -- e.g. the
+    // user starts another page merge while this push is still in flight.
+    // Those new marks must not be included in *this* batch (it's already
+    // being built/sent) but must also not be lost -- see the filtered
+    // reset below, which is the actual fix: the previous unconditional
+    // `this.meta.dirty = []` wiped out exactly this kind of mid-flight
+    // addition, silently dropping that page's change forever (it looked
+    // synced locally, but the edit -- e.g. a merge's savePage+deletePage
+    // pair -- had never actually reached GitHub), which is how
+    // pages/_index.json drifted from the real page list after doing
+    // several merges back to back. LocalStore has no comparable network
+    // delay, which is why this never reproduced without GitHub involved.
+    const dirtyTitles = [...this.meta.dirty];
+    const deletedTitles = [...this.meta.deleted];
 
-    for (const title of this.meta.dirty) {
+    const changes: PageChange[] = [];
+    for (const title of dirtyTitles) {
       const page = await this.local.getPage(title);
       if (page) changes.push({ title, lines: page.lines, created: page.created, updated: page.updated, mergeCandidate: page.mergeCandidate });
     }
-    for (const title of this.meta.deleted) {
+    for (const title of deletedTitles) {
       changes.push({ title, lines: null });
     }
     if (changes.length === 0) return;
@@ -232,7 +253,12 @@ export class GitHubSyncStore implements Store, SyncCapable {
         this.meta.lastSyncedUpdated[change.title] = change.updated ?? Math.floor(Date.now() / 1000);
       }
     }
-    this.meta.dirty = [];
-    this.meta.deleted = [];
+    // Only drop the titles this push actually sent -- anything
+    // markDirty()/markDeleted() added since the snapshot above stays
+    // queued for the next sync instead of being silently discarded.
+    const pushedDirty = new Set(dirtyTitles);
+    const pushedDeleted = new Set(deletedTitles);
+    this.meta.dirty = this.meta.dirty.filter((t) => !pushedDirty.has(t));
+    this.meta.deleted = this.meta.deleted.filter((t) => !pushedDeleted.has(t));
   }
 }
