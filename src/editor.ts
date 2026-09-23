@@ -31,6 +31,64 @@ function caretNodeOffsetFromPoint(x: number, y: number): { node: Node; offset: n
   return null;
 }
 
+// Pixel position (relative to the textarea's own top-left, ignoring its
+// scroll offset) of a character index -- there is no native textarea API
+// for this, so it's measured with a hidden mirror element that copies
+// every style affecting layout/wrapping, filled with the same text up to
+// that index. Standard technique (see e.g. component-textarea-caret-position);
+// reading the values from getComputedStyle rather than hardcoding them
+// means this keeps working no matter what CSS .page-edit ends up with.
+const MIRROR_STYLE_PROPS: (keyof CSSStyleDeclaration)[] = [
+  'boxSizing',
+  'width',
+  'borderTopWidth',
+  'borderRightWidth',
+  'borderBottomWidth',
+  'borderLeftWidth',
+  'paddingTop',
+  'paddingRight',
+  'paddingBottom',
+  'paddingLeft',
+  'fontStyle',
+  'fontVariant',
+  'fontWeight',
+  'fontSize',
+  'lineHeight',
+  'fontFamily',
+  'textAlign',
+  'textIndent',
+  'textTransform',
+  'letterSpacing',
+  'wordSpacing',
+  'tabSize',
+  'wordBreak',
+];
+
+function getCaretCoordinates(ta: HTMLTextAreaElement, position: number): { top: number; left: number; height: number } {
+  const div = document.createElement('div');
+  const computed = window.getComputedStyle(ta);
+  const style = div.style;
+  style.position = 'absolute';
+  style.visibility = 'hidden';
+  style.whiteSpace = 'pre-wrap';
+  style.wordWrap = 'break-word';
+  for (const prop of MIRROR_STYLE_PROPS) {
+    const value = computed[prop];
+    if (typeof value === 'string') (style as unknown as Record<string, string>)[prop as string] = value;
+  }
+  document.body.appendChild(div);
+  div.textContent = ta.value.slice(0, position);
+  const span = document.createElement('span');
+  // A trailing space renders zero-width, which would collapse the marker
+  // onto the previous character -- '.' guarantees it has measurable extent.
+  span.textContent = ta.value.slice(position) || '.';
+  div.appendChild(span);
+  const { offsetLeft: left, offsetTop: top } = span;
+  document.body.removeChild(div);
+  const lineHeight = parseFloat(computed.lineHeight) || parseFloat(computed.fontSize) * 1.2;
+  return { top, left, height: lineHeight };
+}
+
 export interface EditorOptions {
   container: HTMLElement;
   lines: string[];
@@ -40,20 +98,33 @@ export interface EditorOptions {
   // taken once when the page is opened -- doesn't need to track concurrent
   // edits live, same as the rest of this view.
   knownTitles: Set<string>;
+  // Called when the user uses the selection toolbar's "ページ切り出し" button.
+  // `lines` is the selected text split on '\n' (lines[0] is the new page's
+  // title, same convention as every other page in this app). The caller is
+  // responsible for actually creating the page (and deciding what to do if
+  // a page with that title already exists) -- the Editor only replaces the
+  // selection with a link to it.
+  onExtractPage?: (title: string, lines: string[]) => void | Promise<void>;
 }
 
 export class Editor {
   private container: HTMLElement;
   private lines: string[];
   private onChange: (lines: string[]) => void | Promise<void>;
+  private onExtractPage: ((title: string, lines: string[]) => void | Promise<void>) | undefined;
   private renderOpts: RenderOpts;
   private editing = false;
   private textarea: HTMLTextAreaElement | null = null;
+  private selectionToolbar: HTMLElement | null = null;
+  private selStart: number | null = null;
+  private selEnd: number | null = null;
+  private readonly boundUpdateToolbar = () => this.updateSelectionToolbar();
 
-  constructor({ container, lines, onChange, knownTitles }: EditorOptions) {
+  constructor({ container, lines, onChange, knownTitles, onExtractPage }: EditorOptions) {
     this.container = container;
     this.lines = [...lines];
     this.onChange = onChange;
+    this.onExtractPage = onExtractPage;
     this.renderOpts = { linkBase: '#/page/', knownTitles };
     this.container.addEventListener('click', (e) => this.handleContainerClick(e));
     this.renderView();
@@ -133,6 +204,14 @@ export class Editor {
 
     ta.addEventListener('blur', () => this.commit());
 
+    // selectionchange (rather than select/mouseup/keyup) catches every way a
+    // selection can change -- mouse drag, shift+arrows, double/triple-click,
+    // and iOS's native selection handles after a long-press -- without
+    // juggling several event types. It fires on every caret move too, but
+    // updateSelectionToolbar() is cheap when there's nothing selected.
+    document.addEventListener('selectionchange', this.boundUpdateToolbar);
+    window.addEventListener('scroll', this.boundUpdateToolbar, true);
+
     this.container.appendChild(ta);
     autosize();
     // The textarea is sized to fit all its content (autosize above), so it
@@ -151,10 +230,133 @@ export class Editor {
   private commit(): void {
     const ta = this.textarea;
     if (!ta) return;
+    document.removeEventListener('selectionchange', this.boundUpdateToolbar);
+    window.removeEventListener('scroll', this.boundUpdateToolbar, true);
+    this.hideSelectionToolbar();
     this.lines = ta.value.split('\n');
     this.editing = false;
     this.textarea = null;
     this.renderView();
     void this.onChange([...this.lines]);
+  }
+
+  // --- Selection toolbar (Scrapbox-style "select text -> act on it") ---
+
+  private hideSelectionToolbar(): void {
+    if (this.selectionToolbar) {
+      this.selectionToolbar.remove();
+      this.selectionToolbar = null;
+    }
+  }
+
+  private ensureSelectionToolbar(): HTMLElement {
+    if (this.selectionToolbar) return this.selectionToolbar;
+    const bar = document.createElement('div');
+    bar.className = 'selection-toolbar';
+    // Clicking a button would otherwise blur the textarea first (which
+    // commits and tears down the whole editor DOM before the click handler
+    // even runs). preventDefault on mousedown keeps focus -- and the
+    // selection -- on the textarea instead.
+    bar.addEventListener('mousedown', (e) => e.preventDefault());
+
+    const linkBtn = document.createElement('button');
+    linkBtn.type = 'button';
+    linkBtn.className = 'selection-toolbar-btn';
+    linkBtn.textContent = '[ ] リンク化';
+    linkBtn.title = '選択範囲を [ ] で囲んでリンクにする';
+    linkBtn.addEventListener('click', () => this.linkifySelection());
+
+    const extractBtn = document.createElement('button');
+    extractBtn.type = 'button';
+    extractBtn.className = 'selection-toolbar-btn';
+    extractBtn.textContent = 'ページ切り出し';
+    extractBtn.title = '選択範囲を新しいページに切り出してリンクする';
+    extractBtn.addEventListener('click', () => void this.extractSelection());
+
+    bar.append(linkBtn, extractBtn);
+    document.body.appendChild(bar);
+    this.selectionToolbar = bar;
+    return bar;
+  }
+
+  private updateSelectionToolbar(): void {
+    const ta = this.textarea;
+    if (!this.editing || !ta || document.activeElement !== ta) {
+      this.hideSelectionToolbar();
+      return;
+    }
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (start === end || !ta.value.slice(start, end).trim()) {
+      this.hideSelectionToolbar();
+      return;
+    }
+    this.selStart = start;
+    this.selEnd = end;
+
+    const bar = this.ensureSelectionToolbar();
+    const caret = getCaretCoordinates(ta, start);
+    const taRect = ta.getBoundingClientRect();
+    const anchorTop = taRect.top + caret.top - ta.scrollTop;
+    const anchorLeft = taRect.left + caret.left - ta.scrollLeft;
+
+    bar.style.position = 'fixed';
+    bar.style.visibility = 'hidden';
+    bar.style.display = 'flex';
+    requestAnimationFrame(() => {
+      // The selection (or edit mode itself) may already be gone by the
+      // time this runs -- nothing to position in that case.
+      if (!this.selectionToolbar || this.selStart === null) return;
+      const barRect = bar.getBoundingClientRect();
+      let top = anchorTop - barRect.height - 8;
+      if (top < 4) top = anchorTop + caret.height + 8; // no room above -> show below instead
+      let left = anchorLeft;
+      left = Math.max(4, Math.min(left, window.innerWidth - barRect.width - 4));
+      bar.style.top = `${top}px`;
+      bar.style.left = `${left}px`;
+      bar.style.visibility = 'visible';
+    });
+  }
+
+  private replaceSelectionWithLink(title: string): void {
+    const ta = this.textarea;
+    if (!ta || this.selStart === null || this.selEnd === null) return;
+    const before = ta.value.slice(0, this.selStart);
+    const after = ta.value.slice(this.selEnd);
+    ta.value = `${before}[${title}]${after}`;
+    ta.dispatchEvent(new Event('input')); // re-run the autosize listener
+    ta.focus();
+    const newStart = before.length + 1;
+    ta.setSelectionRange(newStart, newStart + title.length);
+    this.hideSelectionToolbar();
+  }
+
+  private linkifySelection(): void {
+    const ta = this.textarea;
+    if (!ta || this.selStart === null || this.selEnd === null) return;
+    this.replaceSelectionWithLink(ta.value.slice(this.selStart, this.selEnd));
+  }
+
+  private async extractSelection(): Promise<void> {
+    const ta = this.textarea;
+    if (!ta || this.selStart === null || this.selEnd === null) return;
+    const selected = ta.value.slice(this.selStart, this.selEnd);
+    const newLines = selected.split('\n');
+    const title = (newLines[0] || '').trim();
+    if (!title) {
+      this.hideSelectionToolbar();
+      return;
+    }
+    this.replaceSelectionWithLink(title);
+    try {
+      await this.onExtractPage?.(title, newLines);
+      // So the new link renders as "exists" (not "missing") the moment
+      // this page is next rendered, without waiting for a full reload.
+      this.renderOpts.knownTitles.add(title.toLowerCase());
+    } catch {
+      // The link is already in the text either way; the new page just
+      // didn't get created (e.g. a save error) -- same recoverable state
+      // as any other failed save in this app, nothing extra to do here.
+    }
   }
 }

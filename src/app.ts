@@ -527,6 +527,13 @@ async function renderPage(title: string): Promise<void> {
     container: editorEl,
     lines: page.lines,
     knownTitles,
+    onExtractPage: async (extractedTitle, extractedLines) => {
+      // Never overwrite an existing page -- selecting text that happens to
+      // match an existing title should just link to it, same as Scrapbox.
+      if (!(await store.getPage(extractedTitle))) {
+        await store.savePage({ title: extractedTitle, lines: extractedLines });
+      }
+    },
     onChange: async (lines) => {
       let newTitle = lines[0] || currentTitle;
       let mergeCandidate: string | undefined;

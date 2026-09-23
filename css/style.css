@@ -280,6 +280,33 @@ a { color: var(--link); }
 }
 .page-edit:focus { outline: none; }
 
+/* Floating popup shown near a text selection while editing (Scrapbox's
+   "select text -> act on it" pattern). position:fixed + JS-set top/left,
+   see editor.ts's updateSelectionToolbar(). */
+.selection-toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 6px;
+  background: var(--fg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 20;
+}
+.selection-toolbar-btn {
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--bg);
+  padding: 6px 10px;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.selection-toolbar-btn:hover,
+.selection-toolbar-btn:active {
+  background: rgba(255, 255, 255, 0.2);
+}
+
 /* Link color-coding is a scrapbox-tycoon convention, not part of real
    Scrapbox: green external links get a trailing arrow, missing internal
    links get a dashed red underline, so a bad/typo'd link is visible before
