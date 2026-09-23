@@ -23,6 +23,11 @@ import type { Page, PageSummary, PageInput, Store, SyncStatus, SyncCapable } fro
 
 const SYNC_META_KEY = 'scrapbox_tycoon_sync_meta_v1';
 const AUTO_SYNC_DEBOUNCE_MS = 4000;
+// A failed sync (e.g. GitHub's git/trees occasionally erroring transiently
+// — see GitHubStore) would otherwise sit dirty until the next edit happens
+// to trigger another attempt. Retry once on our own after a delay so a
+// transient failure recovers even during a lull in editing.
+const RETRY_AFTER_FAILURE_MS = 15000;
 
 interface SyncMeta {
   dirty: string[];
@@ -58,6 +63,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
   private syncPromise: Promise<void> | null = null;
   private disposed = false;
+  private retryScheduled = false;
 
   constructor(config: GitHubStoreConfig) {
     this.remote = new GitHubStore(config);
@@ -160,6 +166,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
       await this.pull();
       await this.push();
       writeMeta(this.meta);
+      this.retryScheduled = false;
       this.setStatus({
         state: 'idle',
         dirtyCount: this.meta.dirty.length + this.meta.deleted.length,
@@ -169,6 +176,13 @@ export class GitHubSyncStore implements Store, SyncCapable {
     } catch (err) {
       writeMeta(this.meta);
       this.setStatus({ state: 'error', lastError: (err as Error).message });
+      if (!this.retryScheduled && !this.disposed) {
+        this.retryScheduled = true;
+        this.debounceTimer = setTimeout(() => {
+          this.retryScheduled = false;
+          void this.syncNow();
+        }, RETRY_AFTER_FAILURE_MS);
+      }
       throw err;
     }
   }

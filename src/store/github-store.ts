@@ -23,7 +23,7 @@
 import type { Page, PageSummary } from '../types.js';
 
 const API = 'https://api.github.com';
-const MAX_COMMIT_ATTEMPTS = 5;
+const MAX_COMMIT_ATTEMPTS = 8;
 
 function base64ToUtf8(b64: string): string {
   const binary = atob(b64.replace(/\n/g, ''));
