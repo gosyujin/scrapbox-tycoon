@@ -67,10 +67,32 @@ function updateBadge(): void {
 
 function wireStoreStatus(): void {
   if (isSyncCapable(store)) {
-    store.onSyncStatusChange(() => updateBadge());
+    store.onSyncStatusChange((s) => {
+      updateBadge();
+      // A change made on another device (e.g. the source page of a merge
+      // being deleted) only reaches this tab's local copy via a pull, which
+      // otherwise only runs when this tab makes its own edit. Once one
+      // completes, refresh the list if that's what's on screen -- it has no
+      // in-progress edit that a refresh could clobber, unlike a page view.
+      if (s.state === 'idle' && (location.hash === '' || location.hash === '#/')) {
+        void renderPageList();
+      }
+    });
   }
 }
 wireStoreStatus();
+
+// Coming back to a backgrounded tab/PWA is exactly when the on-screen data
+// is most likely stale (another device may have changed things in the
+// meantime), so re-sync right away instead of waiting for this tab's own
+// next edit.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && isSyncCapable(store)) {
+    void store.syncNow().catch(() => {
+      /* status line already reflects the error */
+    });
+  }
+});
 
 // Settings saved in another tab/window (e.g. a backgrounded PWA instance)
 // only reach this one as a 'storage' event -- without this, that other
