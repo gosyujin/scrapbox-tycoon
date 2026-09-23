@@ -216,6 +216,13 @@ export class GitHubStore {
       for (const change of changes) {
         const path = `pages/${slug(change.title)}`;
         if (change.lines === null) {
+          // A page created and deleted locally before it was ever synced
+          // has no entry here -- and asking git/trees to delete (sha: null)
+          // a path that was never in base_tree fails every attempt with
+          // "GitRPC::BadObjectState" (confirmed against the live API), not
+          // just occasionally, so retrying never helps. Skip it: there is
+          // nothing on the remote to remove.
+          if (!entryMap.has(change.title)) continue;
           entryMap.delete(change.title);
           fileChanges.push({ path, content: null });
           continue;
