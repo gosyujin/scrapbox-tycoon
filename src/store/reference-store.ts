@@ -163,6 +163,17 @@ async function scanAll(): Promise<ReferencePage[]> {
   return results;
 }
 
+// For the link exists/missing color-coding (see parser.ts's RenderOpts) --
+// getAllKeys() reads only the keyPath (title) for every record, skipping
+// the full page bodies that scanAll()'s cursor would otherwise pull in.
+export async function getAllTitlesLowercased(): Promise<Set<string>> {
+  const db = await openDb();
+  const tx = db.transaction(PAGES_STORE, 'readonly');
+  const keys = await reqResult<IDBValidKey[]>(tx.objectStore(PAGES_STORE).getAllKeys());
+  db.close();
+  return new Set(keys.map((k) => String(k).toLowerCase()));
+}
+
 export async function listPages(limit: number): Promise<{ summaries: ReferenceSummary[]; total: number }> {
   const all = await scanAll();
   all.sort((a, b) => b.updated - a.updated);

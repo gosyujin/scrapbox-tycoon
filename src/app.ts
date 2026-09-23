@@ -11,6 +11,7 @@ import {
   listPages as listReferencePages,
   searchPages as searchReferencePages,
   getBacklinks as getReferenceBacklinksRaw,
+  getAllTitlesLowercased as getReferenceTitles,
 } from './store/reference-store.js';
 import type { Page, Store, SyncCapable, SyncStatus } from './types.js';
 
@@ -284,10 +285,13 @@ async function renderPage(title: string): Promise<void> {
   let currentTitle = title;
   let existsLocally = !isNew;
 
+  const knownTitles = new Set((await store.listPages()).map((p) => p.title.toLowerCase()));
+
   const editorEl = document.getElementById('editor') as HTMLElement;
   new Editor({
     container: editorEl,
     lines: page.lines,
+    knownTitles,
     onChange: async (lines) => {
       let newTitle = lines[0] || currentTitle;
       let mergeCandidate: string | undefined;
@@ -436,7 +440,8 @@ async function renderReferencePage(title: string): Promise<void> {
   wireQuickOpen();
 
   const viewEl = document.getElementById('ref-view') as HTMLElement;
-  renderLinesInto(viewEl, page.lines, '#/ref/');
+  const knownTitles = await getReferenceTitles();
+  renderLinesInto(viewEl, page.lines, { linkBase: '#/ref/', knownTitles });
 
   const hits = await getReferenceBacklinks(title);
   const headingEl = document.getElementById('ref-linked-heading') as HTMLElement;

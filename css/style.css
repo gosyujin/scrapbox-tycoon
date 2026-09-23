@@ -5,6 +5,9 @@
   --border: #e3e3e3;
   --link: #0b6fbf;
   --accent: #eef6ff;
+  --link-missing: #b23b3b;
+  --link-external: #1a7f37;
+  --code-bg: #f0f1f3;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -15,6 +18,9 @@
     --border: #333;
     --link: #6cb6ff;
     --accent: #22303d;
+    --link-missing: #e08080;
+    --link-external: #4ada6f;
+    --code-bg: #262a30;
   }
 }
 
@@ -237,9 +243,145 @@ a { color: var(--link); }
 }
 .page-edit:focus { outline: none; }
 
-.link.internal { text-decoration: none; border-bottom: 1px solid var(--link); }
-.link.tag { text-decoration: none; }
-.link.external { }
+/* Link color-coding is a scrapbox-tycoon convention, not part of real
+   Scrapbox: green external links get a trailing arrow, missing internal
+   links get a dashed red underline, so a bad/typo'd link is visible before
+   you click it. Ported from scrapbox-pwa-viewer's style.css. */
+a.link {
+  color: var(--link);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+a.link:hover { border-bottom-color: var(--link); }
+a.link.strong { font-weight: 700; }
+a.link.tag::before { content: "#"; opacity: 0.6; }
+a.link.missing { color: var(--link-missing); border-bottom: 1px dashed var(--link-missing); }
+a.link.external { color: var(--link-external); }
+a.link.external:hover { border-bottom-color: var(--link-external); }
+a.link.external::after { content: " \2197"; font-size: 0.75em; opacity: 0.6; }
+
+code.inline-code {
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+}
+
+pre.sb-code {
+  background: var(--code-bg);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 6px 0;
+  white-space: pre;
+}
+pre.sb-code .lang {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+table.sb-table {
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 13px;
+}
+table.sb-table td { border: 1px solid var(--border); padding: 4px 8px; }
+table.sb-table caption { text-align: left; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+
+blockquote.sb-quote {
+  margin: 2px 0;
+  padding: 2px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+
+.sb-strong { font-weight: 700; }
+.sb-em { font-style: italic; }
+.sb-strike { text-decoration: line-through; }
+.sb-underline { text-decoration: underline; }
+.sb-h1 { font-size: 1.5em; font-weight: 700; display: inline-block; }
+.sb-h2 { font-size: 1.3em; font-weight: 700; display: inline-block; }
+.sb-h3 { font-size: 1.15em; font-weight: 700; display: inline-block; }
+
+/* ---------- extended decoration syntax ([X text], ported from
+   scrapbox-pwa-viewer, itself carried over from the source Scrapbox
+   project's settings-page custom CSS) ---------- */
+
+/* [< xxx] -> keycap-style */
+.deco-\< {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  line-height: 1.3;
+  padding: 2px 6px;
+  margin: 0 2px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--code-bg);
+  box-shadow: inset 0 -1px 0 var(--border);
+  vertical-align: middle;
+}
+
+/* [> xxx] -> menu-path style */
+.deco-\> {
+  display: inline-block;
+  font-size: 0.85em;
+  line-height: 1.3;
+  padding: 2px 6px;
+  margin: 0 2px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  vertical-align: middle;
+}
+
+/* [" xxx] -> quote */
+.deco-\" { display: inline; padding-left: 4px; }
+.deco-\"::before { content: "\275D "; color: var(--muted); }
+.deco-\"::after { content: " \275E"; color: var(--muted); }
+
+/* [! xxx] -> timestamp badge */
+.deco-\! {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  padding: 2px 6px;
+  margin: 0 2px;
+  border-radius: 4px;
+  background: var(--code-bg);
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+/* [# xxx] -> small raised aside */
+.deco-\# { font-size: 0.75em; vertical-align: text-top; }
+.deco-\#::before { content: "[\2020"; }
+.deco-\#::after { content: "]"; }
+
+.img-embed {
+  display: block;
+  max-width: 100%;
+  margin: 6px 0;
+  border-radius: 6px;
+}
+.img-embed img { max-width: 100%; border-radius: 6px; display: block; }
+.img-embed .img-caption { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* [~ [url]] -> mini inline image/icon instead of a full embed */
+.deco-\~ .img-embed {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  margin: 0 2px;
+  overflow: hidden;
+  vertical-align: middle;
+}
+.deco-\~ .img-embed img { width: 100%; height: 100%; object-fit: cover; border-radius: 3px; }
+.deco-\~ .img-embed .img-caption { display: none; }
 
 /* Anchored to both left AND right (not a vw-based width/max-width), so the
    browser computes the available width directly from the real viewport —

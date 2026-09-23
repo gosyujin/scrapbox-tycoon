@@ -11,7 +11,7 @@
 // that for free; outline-editing features (indent, move line) are also
 // easier to add here later, as plain textarea-line manipulation, than they
 // were juggling many separate elements.
-import { renderLinesInto } from './parser.js';
+import { renderLinesInto, type RenderOpts } from './parser.js';
 
 // Cross-browser "what text position is under this point" lookup (Blink/
 // WebKit vs Firefox spell it differently); returns the DOM node + offset
@@ -35,19 +35,26 @@ export interface EditorOptions {
   container: HTMLElement;
   lines: string[];
   onChange: (lines: string[]) => void | Promise<void>;
+  // Lower-cased titles of pages that currently exist, for the link
+  // exists/missing color-coding (see parser.ts's RenderOpts). A snapshot
+  // taken once when the page is opened -- doesn't need to track concurrent
+  // edits live, same as the rest of this view.
+  knownTitles: Set<string>;
 }
 
 export class Editor {
   private container: HTMLElement;
   private lines: string[];
   private onChange: (lines: string[]) => void | Promise<void>;
+  private renderOpts: RenderOpts;
   private editing = false;
   private textarea: HTMLTextAreaElement | null = null;
 
-  constructor({ container, lines, onChange }: EditorOptions) {
+  constructor({ container, lines, onChange, knownTitles }: EditorOptions) {
     this.container = container;
     this.lines = [...lines];
     this.onChange = onChange;
+    this.renderOpts = { linkBase: '#/page/', knownTitles };
     this.container.addEventListener('click', (e) => this.handleContainerClick(e));
     this.renderView();
   }
@@ -65,28 +72,41 @@ export class Editor {
   // raw source, so the column within a line is a best effort, not a
   // guaranteed match -- still far closer than the old fixed "end" caret.
   private offsetForClick(e: MouseEvent): number | null {
-    const lineEl = (e.target as HTMLElement).closest('.line-view') as HTMLElement | null;
-    if (!lineEl) return null;
-    const lineIndex = Array.from(this.container.children).indexOf(lineEl);
-    if (lineIndex < 0) return null;
+    // Keyed off data-line-start/end (set by renderLinesInto) rather than
+    // DOM child index: a code:/table: block renders as one node covering
+    // several source lines, so "which child is this" no longer means
+    // "which line is this" the way it did with one div per line.
+    const target = (e.target as HTMLElement).closest('[data-line-start]') as HTMLElement | null;
+    if (!target) return null;
+    const lineStart = Number(target.dataset.lineStart);
+    const lineEnd = Number(target.dataset.lineEnd);
+
+    const lineOffset = (index: number) => {
+      let offset = 0;
+      for (let i = 0; i < index; i++) offset += (this.lines[i]?.length ?? 0) + 1; // +1 for the '\n'
+      return offset;
+    };
+
+    if (lineStart !== lineEnd) {
+      // A multi-line block: land at its start rather than guessing which
+      // of its several source lines a point inside it corresponds to.
+      return lineOffset(lineStart);
+    }
 
     let column = 0;
     const caret = caretNodeOffsetFromPoint(e.clientX, e.clientY);
-    if (caret && lineEl.contains(caret.node)) {
+    if (caret && target.contains(caret.node)) {
       const range = document.createRange();
-      range.selectNodeContents(lineEl);
+      range.selectNodeContents(target);
       range.setEnd(caret.node, caret.offset);
       column = range.toString().length;
     }
-    column = Math.min(column, this.lines[lineIndex]?.length ?? 0);
-
-    let offset = 0;
-    for (let i = 0; i < lineIndex; i++) offset += (this.lines[i]?.length ?? 0) + 1; // +1 for the '\n'
-    return offset + column;
+    column = Math.min(column, this.lines[lineStart]?.length ?? 0);
+    return lineOffset(lineStart) + column;
   }
 
   private renderView(): void {
-    renderLinesInto(this.container, this.lines);
+    renderLinesInto(this.container, this.lines, this.renderOpts);
   }
 
   private enterEdit(caretOffset: number | null = null): void {
