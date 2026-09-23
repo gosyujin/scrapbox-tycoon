@@ -299,6 +299,23 @@ function applyIndent(el: HTMLElement, depth: number): void {
   if (depth > 0) el.style.paddingLeft = `${0.6 + depth * 1.2}em`;
 }
 
+// .indent-bullet's own width (1em) + margin-right (0.2em) in css/style.css.
+const BULLET_WIDTH_EM = 1.2;
+
+// Like applyIndent, but for a line that also gets a bullet marker: without
+// this, a wrapped (long) line's continuation lines land flush with the
+// bullet's own left edge instead of under the text that follows it, since
+// the bullet is just inline content pushing the first line over -- padding
+// alone has no way to know a bullet came before it. Pushing padding-left
+// out by the bullet's width and pulling the first line back by the same
+// amount with a negative text-indent (which -- per CSS -- only affects a
+// block's first line) makes the bullet sit in that reclaimed space while
+// every line, wrapped or not, lines up at the same text column.
+function applyBulletIndent(el: HTMLElement, depth: number): void {
+  el.style.paddingLeft = `${0.6 + depth * 1.2 + BULLET_WIDTH_EM}em`;
+  el.style.textIndent = `-${BULLET_WIDTH_EM}em`;
+}
+
 // Shared by the editable-page view (editor.ts) and the read-only
 // reference-page view (app.ts): renders a title + outline-indented body
 // into `container`, replacing its current contents. Each top-level
@@ -395,8 +412,8 @@ export function renderLinesInto(container: HTMLElement, lines: string[], opts: R
     div.className = 'line-view';
     div.dataset.lineStart = String(lineIndex);
     div.dataset.lineEnd = String(lineIndex);
-    applyIndent(div, depth);
     if (depth > 0) {
+      applyBulletIndent(div, depth);
       div.innerHTML = `<span class="indent-bullet">•</span>${renderLine(content, opts)}`;
     } else {
       div.innerHTML = renderLine(content, opts);
