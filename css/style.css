@@ -20,8 +20,19 @@
 
 * { box-sizing: border-box; }
 
+/* Both html and body: which one is the actual root scroller varies by
+   browser, and mobile Safari's elastic overscroll can still rubber-band
+   sideways off just the body's overflow-x:hidden. width: 100% keeps a
+   position:fixed descendant (like .status-bar) from being able to expand
+   this box past the viewport in the first place. */
+html {
+  overflow-x: hidden;
+  width: 100%;
+}
+
 body {
   margin: 0;
+  width: 100%;
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
   background: var(--bg);
   color: var(--fg);
