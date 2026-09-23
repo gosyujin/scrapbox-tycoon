@@ -134,7 +134,15 @@ export class Editor {
 
     this.container.appendChild(ta);
     autosize();
-    ta.focus();
+    // The textarea is sized to fit all its content (autosize above), so it
+    // never scrolls internally -- the page scrolls instead. A plain
+    // .focus() asks the browser to scroll the (now much taller) element
+    // into view on its own terms, which on a long page means jumping to
+    // wherever it decides, in practice the bottom, discarding the caret
+    // position set below and the scroll position the click already had.
+    // preventScroll skips that; the page simply stays where it was, which
+    // is already showing the line that was clicked.
+    ta.focus({ preventScroll: true });
     const pos = caretOffset === null ? ta.value.length : Math.max(0, Math.min(caretOffset, ta.value.length));
     ta.setSelectionRange(pos, pos);
   }
