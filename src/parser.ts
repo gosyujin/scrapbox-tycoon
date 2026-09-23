@@ -75,6 +75,24 @@ export function renderLine(text: string): string {
   return out;
 }
 
+export interface IndentedLine {
+  depth: number;
+  content: string;
+}
+
+// Scrapbox-style outline indent: each leading half-width space, full-width
+// space, or tab counts as one level of depth (not pairs), stripped from the
+// content that actually gets rendered/linkified.
+export function splitIndent(text: string): IndentedLine {
+  let depth = 0;
+  while (depth < text.length) {
+    const ch = text[depth];
+    if (ch === ' ' || ch === '\t' || ch === '　') depth++;
+    else break;
+  }
+  return { depth, content: text.slice(depth) };
+}
+
 function renderBracket(content: string): string {
   if (URL_RE.test(content)) {
     return `<a class="link external" href="${escapeHtml(content)}" target="_blank" rel="noopener noreferrer">${escapeHtml(content)}</a>`;

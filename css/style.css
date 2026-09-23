@@ -144,6 +144,15 @@ a { color: var(--link); }
 .line-view:hover { background: var(--accent); }
 .line-view:empty::before { content: '\00a0'; }
 
+.indent-bullet {
+  display: inline-block;
+  width: 1em;
+  margin-right: 0.2em;
+  text-align: center;
+  color: var(--muted);
+  user-select: none;
+}
+
 .page-edit {
   display: block;
   width: 100%;

@@ -11,7 +11,7 @@
 // that for free; outline-editing features (indent, move line) are also
 // easier to add here later, as plain textarea-line manipulation, than they
 // were juggling many separate elements.
-import { renderLine } from './parser.js';
+import { renderLine, splitIndent } from './parser.js';
 
 export interface EditorOptions {
   container: HTMLElement;
@@ -44,8 +44,21 @@ export class Editor {
     this.container.innerHTML = '';
     this.lines.forEach((text, i) => {
       const div = document.createElement('div');
-      div.className = 'line-view' + (i === 0 ? ' line-title' : '');
-      div.innerHTML = renderLine(text);
+      if (i === 0) {
+        // The title line is never indented, matching Scrapbox.
+        div.className = 'line-view line-title';
+        div.innerHTML = renderLine(text);
+        this.container.appendChild(div);
+        return;
+      }
+      const { depth, content } = splitIndent(text);
+      div.className = 'line-view';
+      if (depth > 0) {
+        div.style.paddingLeft = `${0.6 + depth * 1.2}em`;
+        div.innerHTML = `<span class="indent-bullet">•</span>${renderLine(content)}`;
+      } else {
+        div.innerHTML = renderLine(content);
+      }
       this.container.appendChild(div);
     });
   }
