@@ -216,7 +216,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
 
     for (const title of this.meta.dirty) {
       const page = await this.local.getPage(title);
-      if (page) changes.push({ title, lines: page.lines, created: page.created, updated: page.updated });
+      if (page) changes.push({ title, lines: page.lines, created: page.created, updated: page.updated, mergeCandidate: page.mergeCandidate });
     }
     for (const title of this.meta.deleted) {
       changes.push({ title, lines: null });

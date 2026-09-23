@@ -65,6 +65,7 @@ export interface PageChange {
   lines: string[] | null; // null = delete this page
   created?: number;
   updated?: number;
+  mergeCandidate?: string;
 }
 
 export class GitHubStore {
@@ -226,6 +227,7 @@ export class GitHubStore {
           lines: change.lines,
           created: change.created ?? (existing ? existing.created : now),
           updated: change.updated ?? now,
+          ...(change.mergeCandidate !== undefined ? { mergeCandidate: change.mergeCandidate } : {}),
         };
         fileChanges.push({ path, content: JSON.stringify(record, null, 2) });
         entryMap.set(change.title, { title: change.title, path, updated: record.updated });

@@ -33,11 +33,14 @@ export class LocalStore implements Store {
     const pages = readAll();
     const now = Math.floor(Date.now() / 1000);
     const existing = pages[page.title];
+    const mergeCandidate =
+      page.mergeCandidate === null ? undefined : page.mergeCandidate !== undefined ? page.mergeCandidate : existing?.mergeCandidate;
     pages[page.title] = {
       title: page.title,
       lines: page.lines,
       created: page.created ?? (existing ? existing.created : now),
       updated: page.updated ?? now,
+      ...(mergeCandidate !== undefined ? { mergeCandidate } : {}),
     };
     writeAll(pages);
   }

@@ -155,10 +155,19 @@ async function renderPage(title: string): Promise<void> {
   const isNew = !existing;
   const page: Page = existing || { title, lines: [title], created: 0, updated: 0 };
 
+  const mergeBanner = page.mergeCandidate
+    ? `<div class="merge-banner">
+         <span>"${escapeHtml(page.mergeCandidate)}" と同じタイトルになったため別ページとして保存されています。</span>
+         <button id="merge-now">統合する</button>
+         <button id="merge-dismiss" class="secondary">この提案を消す</button>
+       </div>`
+    : '';
+
   app.innerHTML = `
     ${topBar()}
     <div class="content page-content">
       ${isNew ? '<p class="muted">新規ページ（最初の行を編集すると保存されます）</p>' : ''}
+      ${mergeBanner}
       <div id="editor"></div>
       <section class="linked">
         <h3 id="linked-heading">逆リンク</h3>
@@ -167,9 +176,42 @@ async function renderPage(title: string): Promise<void> {
     </div>`;
   wireQuickOpen();
 
+  if (page.mergeCandidate) {
+    const targetTitle = page.mergeCandidate;
+    document.getElementById('merge-now')!.addEventListener('click', async () => {
+      const target = await store.getPage(targetTitle);
+      if (target) {
+        const separator = target.lines[target.lines.length - 1] === '' ? [] : [''];
+        const mergedLines = [...target.lines, ...separator, ...page.lines.slice(1)];
+        await store.savePage({ title: targetTitle, lines: mergedLines });
+        await store.deletePage(title);
+        navigate(`#/page/${encodeURIComponent(targetTitle)}`);
+      } else {
+        // The target page is gone (deleted meanwhile) -> nothing to merge into.
+        await store.savePage({ title, lines: page.lines, mergeCandidate: null });
+        await renderPage(title);
+      }
+    });
+    document.getElementById('merge-dismiss')!.addEventListener('click', async () => {
+      await store.savePage({ title, lines: page.lines, mergeCandidate: null });
+      await renderPage(title);
+    });
+  }
+
   // Saves go straight to localStorage (instant, no network), so there is no
   // need to serialize/queue them here — GitHubSyncStore buffers and pushes
   // them to GitHub on its own schedule (see src/store/github-sync-store.ts).
+  //
+  // A title collision is never resolved inline here: seizing control with a
+  // blocking prompt mid-edit, and mutating `lines` to someone else's merged
+  // content behind the Editor's back, left its own in-memory state stale —
+  // a further edit before navigating away would silently overwrite the
+  // merge. Instead, on a collision this page is just saved under a free
+  // "_N" title (never destroying the existing page) and tagged with
+  // mergeCandidate, surfaced above as a banner the user can act on
+  // whenever they choose — see the merge-now handler above, which merges
+  // and navigates away immediately, so there is no stale Editor to worry
+  // about.
   let currentTitle = title;
   let existsLocally = !isNew;
 
@@ -179,30 +221,30 @@ async function renderPage(title: string): Promise<void> {
     lines: page.lines,
     onChange: async (lines) => {
       let newTitle = lines[0] || currentTitle;
+      let mergeCandidate: string | undefined;
 
       if (newTitle !== currentTitle) {
         const collision = await store.getPage(newTitle);
         if (collision) {
-          const merge = confirm(
-            `"${newTitle}" は既に存在するページです。\n\n` +
-              'OK: このページを既存ページの末尾に統合する\n' +
-              'キャンセル: 別ページとして保存する（タイトルに _2 などを付加）'
-          );
-          if (merge) {
-            const separator = collision.lines[collision.lines.length - 1] === '' ? [] : [''];
-            lines = [...collision.lines, ...separator, ...lines.slice(1)];
-          } else {
-            newTitle = await uniqueTitle(newTitle);
-            lines = [newTitle, ...lines.slice(1)];
-          }
+          mergeCandidate = newTitle;
+          newTitle = await uniqueTitle(newTitle);
+          lines = [newTitle, ...lines.slice(1)];
         }
       }
 
-      await store.savePage({ title: newTitle, lines });
+      await store.savePage({ title: newTitle, lines, ...(mergeCandidate ? { mergeCandidate } : {}) });
+
       if (newTitle !== currentTitle) {
         if (existsLocally) await store.deletePage(currentTitle);
-        currentTitle = newTitle;
         history.replaceState(null, '', `#/page/${encodeURIComponent(newTitle)}`);
+        // Rebuild the page from what was actually saved rather than just
+        // updating the URL: on a collision, the saved title/content
+        // (deduped to "_N") differs from what was typed, and this Editor
+        // instance's own state still holds the pre-dedupe version — an
+        // in-place update would leave the view showing stale content until
+        // a full reload.
+        await renderPage(newTitle);
+        return;
       }
       existsLocally = true;
     },
