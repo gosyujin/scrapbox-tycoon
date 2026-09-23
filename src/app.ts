@@ -72,6 +72,20 @@ function wireStoreStatus(): void {
 }
 wireStoreStatus();
 
+// Settings saved in another tab/window (e.g. a backgrounded PWA instance)
+// only reach this one as a 'storage' event -- without this, that other
+// instance keeps its old GitHubSyncStore alive with the old owner/repo/token
+// baked in, and can push a later edit to the wrong repo whenever its
+// debounce/retry timer next fires.
+window.addEventListener('storage', (e) => {
+  if (e.key !== SETTINGS_KEY) return;
+  settings = { backend: 'local', owner: '', repo: '', branch: 'main', token: '', ...loadSettings() };
+  if (isSyncCapable(store)) store.dispose();
+  store = makeStore();
+  wireStoreStatus();
+  updateBadge();
+});
+
 function navigate(hash: string): void {
   location.hash = hash;
 }
