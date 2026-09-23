@@ -232,6 +232,14 @@ body {
 a { color: var(--link); }
 .muted { color: var(--muted); font-size: 13px; }
 
+/* Headings are just bold section labels here, not a size hierarchy --
+   the browser's default large heading sizes are turned off so they read
+   as emphasis rather than jumping out as display text. */
+h1, h2, h3 {
+  font-size: 1em;
+  font-weight: 700;
+}
+
 .line-view {
   padding: 3px 6px;
   border-radius: 4px;
@@ -243,7 +251,9 @@ a { color: var(--link); }
   min-height: 1.6em;
 }
 .line-view.line-title {
-  font-size: 22px;
+  /* Bold-only, not larger -- a bigger font here than the edit-mode
+     textarea's 16px (see .page-edit) makes the line reflow height jump
+     when switching between view and edit, shifting the whole page. */
   font-weight: 700;
   margin-bottom: 6px;
 }
