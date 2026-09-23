@@ -44,6 +44,7 @@ let store: Store = makeStore();
 
 const app = document.getElementById('app') as HTMLElement;
 const backendBadge = document.getElementById('backend-badge') as HTMLElement;
+const syncStatusEl = document.getElementById('sync-status') as HTMLElement;
 
 function describeSyncStatus(s: SyncStatus): string {
   if (s.state === 'syncing') return '同期中...';
@@ -54,9 +55,13 @@ function describeSyncStatus(s: SyncStatus): string {
 
 function updateBadge(): void {
   if (isSyncCapable(store)) {
-    backendBadge.textContent = `GitHub: ${settings.owner}/${settings.repo}@${settings.branch} — ${describeSyncStatus(store.getSyncStatus())}`;
+    backendBadge.textContent = `GitHub: ${settings.owner}/${settings.repo}@${settings.branch}`;
+    syncStatusEl.textContent = describeSyncStatus(store.getSyncStatus());
+    syncStatusEl.style.display = '';
   } else {
     backendBadge.textContent = 'Local (this browser only)';
+    syncStatusEl.textContent = '';
+    syncStatusEl.style.display = 'none';
   }
 }
 

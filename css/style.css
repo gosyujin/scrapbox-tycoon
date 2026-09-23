@@ -217,10 +217,27 @@ a { color: var(--link); }
   right: 10px;
   bottom: 10px;
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.status-bar-row {
+  display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  pointer-events: none;
+}
+
+.sync-status {
+  align-self: flex-start;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .backend-badge,
