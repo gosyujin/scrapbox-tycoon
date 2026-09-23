@@ -588,13 +588,10 @@ function referenceBanner(meta: { projectName: string; importedAt: number }): str
   ).toLocaleString()}時点）</p>`;
 }
 
-async function renderReferenceList(query = ''): Promise<void> {
-  // Only the debounced re-render triggered by typing in #ref-search should
-  // restore focus/caret afterward -- app.innerHTML below destroys the old
-  // input, so this has to be captured before that happens. A plain
-  // navigation to #/ref should not steal focus and pop the keyboard.
-  const hadSearchFocus = (document.activeElement as HTMLElement | null)?.id === 'ref-search';
-
+// Search lives on the home page now (one box covering notes + reference
+// together) -- this view is just the sorted full list, with its own sort
+// control for browsing beyond the home page's capped preview.
+async function renderReferenceList(): Promise<void> {
   const meta = await getReferenceMeta();
   if (!meta) {
     app.innerHTML = `
@@ -608,18 +605,15 @@ async function renderReferenceList(query = ''): Promise<void> {
   }
 
   const getVisitedAt = (title: string) => refVisits.getStats(title).lastVisited;
-  const { summaries, total } = query
-    ? await searchReferencePages(query, REFERENCE_LIST_LIMIT, refSort, getVisitedAt)
-    : await listReferencePages(REFERENCE_LIST_LIMIT, refSort, getVisitedAt);
+  const { summaries, total } = await listReferencePages(REFERENCE_LIST_LIMIT, refSort, getVisitedAt);
   const truncatedNote =
-    total > summaries.length ? `<p class="muted">先頭${summaries.length}件のみ表示中（全${total}件）。検索で絞り込めます。</p>` : '';
+    total > summaries.length ? `<p class="muted">先頭${summaries.length}件のみ表示中（全${total}件）。ホームの検索で絞り込めます。</p>` : '';
 
   app.innerHTML = `
     ${topBar()}
     <div class="content">
       ${referenceBanner(meta)}
       <h1>参照ページ一覧 (${total})</h1>
-      <input id="ref-search" class="quick-open" placeholder="検索（タイトル・本文）" value="${escapeAttr(query)}">
       <div class="sort-bar">
         <label for="ref-list-sort">並び替え</label>
         ${sortSelectHtml('ref-list-sort', REF_SORT_LABELS, refSort)}
@@ -639,18 +633,10 @@ async function renderReferenceList(query = ''): Promise<void> {
     </div>`;
   wireQuickOpen();
 
-  const searchInput = document.getElementById('ref-search') as HTMLInputElement;
-  wireDebouncedSearch(searchInput, (q) => void renderReferenceList(q));
-  if (hadSearchFocus) {
-    // Typing moves the caret to the end of the freshly-rendered input by
-    // default; keep it where the user left it instead.
-    searchInput.focus();
-    searchInput.setSelectionRange(query.length, query.length);
-  }
   document.getElementById('ref-list-sort')?.addEventListener('change', (e) => {
     refSort = (e.target as HTMLSelectElement).value as ReferenceSortKey;
     saveSort(REF_SORT_KEY, refSort);
-    void renderReferenceList(query);
+    void renderReferenceList();
   });
 }
 
