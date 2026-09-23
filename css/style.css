@@ -73,6 +73,7 @@ body {
   background: var(--bg);
   color: var(--fg);
   min-width: 0;
+  font-size: 16px; /* see .page-edit: avoids iOS Safari's zoom-on-focus */
 }
 
 .topbar nav a {
@@ -154,7 +155,11 @@ a { color: var(--link); }
   background: var(--accent);
   color: var(--fg);
   font-family: inherit;
-  font-size: 15px;
+  /* Must be >= 16px: iOS Safari auto-zooms the page on focusing any
+     input/textarea with a smaller font size (to make the text legible),
+     and never zooms back out on blur — which is what was causing the
+     "page can suddenly be swiped sideways" bug after editing. */
+  font-size: 16px;
   line-height: 1.6;
   overflow: hidden;
 }
@@ -214,6 +219,7 @@ a { color: var(--link); }
   color: var(--fg);
   width: 100%;
   max-width: 420px;
+  font-size: 16px; /* see .page-edit: avoids iOS Safari's zoom-on-focus */
 }
 .settings button {
   margin-top: 14px;
