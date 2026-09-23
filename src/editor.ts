@@ -13,6 +13,24 @@
 // were juggling many separate elements.
 import { renderLine, splitIndent } from './parser.js';
 
+// Cross-browser "what text position is under this point" lookup (Blink/
+// WebKit vs Firefox spell it differently); returns the DOM node + offset
+// the browser would place a native caret at.
+function caretNodeOffsetFromPoint(x: number, y: number): { node: Node; offset: number } | null {
+  const doc = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  };
+  if (doc.caretPositionFromPoint) {
+    const pos = doc.caretPositionFromPoint(x, y);
+    return pos ? { node: pos.offsetNode, offset: pos.offset } : null;
+  }
+  if (document.caretRangeFromPoint) {
+    const range = document.caretRangeFromPoint(x, y);
+    return range ? { node: range.startContainer, offset: range.startOffset } : null;
+  }
+  return null;
+}
+
 export interface EditorOptions {
   container: HTMLElement;
   lines: string[];
@@ -37,7 +55,34 @@ export class Editor {
   private handleContainerClick(e: MouseEvent): void {
     if (this.editing) return; // clicks land on the textarea itself; nothing to do
     if ((e.target as HTMLElement).closest('a')) return; // let link clicks navigate
-    this.enterEdit();
+    this.enterEdit(this.offsetForClick(e));
+  }
+
+  // Maps a click in the rendered view to a character offset in the raw
+  // (\n-joined) textarea value, so entering edit mode drops the caret near
+  // where the user actually clicked instead of always at the very end.
+  // Approximate, not exact: markup like [a link] renders shorter than its
+  // raw source, so the column within a line is a best effort, not a
+  // guaranteed match -- still far closer than the old fixed "end" caret.
+  private offsetForClick(e: MouseEvent): number | null {
+    const lineEl = (e.target as HTMLElement).closest('.line-view') as HTMLElement | null;
+    if (!lineEl) return null;
+    const lineIndex = Array.from(this.container.children).indexOf(lineEl);
+    if (lineIndex < 0) return null;
+
+    let column = 0;
+    const caret = caretNodeOffsetFromPoint(e.clientX, e.clientY);
+    if (caret && lineEl.contains(caret.node)) {
+      const range = document.createRange();
+      range.selectNodeContents(lineEl);
+      range.setEnd(caret.node, caret.offset);
+      column = range.toString().length;
+    }
+    column = Math.min(column, this.lines[lineIndex]?.length ?? 0);
+
+    let offset = 0;
+    for (let i = 0; i < lineIndex; i++) offset += (this.lines[i]?.length ?? 0) + 1; // +1 for the '\n'
+    return offset + column;
   }
 
   private renderView(): void {
@@ -63,7 +108,7 @@ export class Editor {
     });
   }
 
-  private enterEdit(): void {
+  private enterEdit(caretOffset: number | null = null): void {
     this.editing = true;
     this.container.innerHTML = '';
 
@@ -90,7 +135,8 @@ export class Editor {
     this.container.appendChild(ta);
     autosize();
     ta.focus();
-    ta.setSelectionRange(ta.value.length, ta.value.length);
+    const pos = caretOffset === null ? ta.value.length : Math.max(0, Math.min(caretOffset, ta.value.length));
+    ta.setSelectionRange(pos, pos);
   }
 
   private commit(): void {
