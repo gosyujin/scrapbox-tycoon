@@ -52,6 +52,27 @@ function sortSelectHtml(id: string, labels: Record<string, string>, current: str
   return `<select id="${id}" class="sort-select">${options}</select>`;
 }
 
+// Remembers the last-picked sort choice across reloads (localStorage,
+// device-local like the visit stats above). Validated against the current
+// label set so a stale value from a removed sort option (e.g. the old
+// "Modified in Cache") falls back to the default instead of silently
+// breaking.
+function loadSort<T extends string>(key: string, labels: Record<T, string>, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    return v && Object.prototype.hasOwnProperty.call(labels, v) ? (v as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function saveSort(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* sort choice just won't persist -- not worth surfacing an error for */
+  }
+}
+
 const SETTINGS_KEY = 'scrapbox_tycoon_settings_v1';
 
 interface Settings {
@@ -264,8 +285,14 @@ function wireDebouncedSearch(input: HTMLInputElement, onSearch: (query: string) 
 
 const HOME_REF_LIMIT = 30;
 
-let homeNoteSort: NoteSortKey = 'modified';
-let homeRefSort: ReferenceSortKey = 'modified';
+const NOTE_SORT_KEY = 'scrapbox_tycoon_note_sort_v1';
+const REF_SORT_KEY = 'scrapbox_tycoon_ref_sort_v1';
+
+let homeNoteSort: NoteSortKey = loadSort(NOTE_SORT_KEY, NOTE_SORT_LABELS, 'modified');
+// Shared between the home page's reference section and #/ref's own list --
+// both sort the same underlying data, so one remembered choice applies to
+// both rather than tracking them independently.
+let refSort: ReferenceSortKey = loadSort(REF_SORT_KEY, REF_SORT_LABELS, 'modified');
 
 interface NoteRow {
   title: string;
@@ -348,8 +375,8 @@ async function renderPageList(query = ''): Promise<void> {
   if (refMeta) {
     const getVisitedAt = (title: string) => refVisits.getStats(title).lastVisited;
     const { summaries, total } = query
-      ? await searchReferencePages(query, HOME_REF_LIMIT, homeRefSort, getVisitedAt)
-      : await listReferencePages(HOME_REF_LIMIT, homeRefSort, getVisitedAt);
+      ? await searchReferencePages(query, HOME_REF_LIMIT, refSort, getVisitedAt)
+      : await listReferencePages(HOME_REF_LIMIT, refSort, getVisitedAt);
     const listHtml =
       summaries
         .map(
@@ -367,7 +394,7 @@ async function renderPageList(query = ''): Promise<void> {
         <h2>参照プロジェクト (${total}) <a class="muted-link" href="#/ref">全件を見る →</a></h2>
         <div class="sort-bar">
           <label for="home-ref-sort">並び替え</label>
-          ${sortSelectHtml('home-ref-sort', REF_SORT_LABELS, homeRefSort)}
+          ${sortSelectHtml('home-ref-sort', REF_SORT_LABELS, refSort)}
         </div>
         <ul class="page-list">${listHtml}</ul>
         ${moreNote}
@@ -408,10 +435,12 @@ async function renderPageList(query = ''): Promise<void> {
 
   document.getElementById('home-note-sort')?.addEventListener('change', (e) => {
     homeNoteSort = (e.target as HTMLSelectElement).value as NoteSortKey;
+    saveSort(NOTE_SORT_KEY, homeNoteSort);
     void renderPageList(query);
   });
   document.getElementById('home-ref-sort')?.addEventListener('change', (e) => {
-    homeRefSort = (e.target as HTMLSelectElement).value as ReferenceSortKey;
+    refSort = (e.target as HTMLSelectElement).value as ReferenceSortKey;
+    saveSort(REF_SORT_KEY, refSort);
     void renderPageList(query);
   });
 }
@@ -552,7 +581,6 @@ async function renderBacklinks(title: string): Promise<void> {
 }
 
 const REFERENCE_LIST_LIMIT = 200;
-let refListSort: ReferenceSortKey = 'modified';
 
 function referenceBanner(meta: { projectName: string; importedAt: number }): string {
   return `<p class="ref-banner">読み取り専用: ${escapeHtml(meta.projectName)} のスナップショット（${new Date(
@@ -581,8 +609,8 @@ async function renderReferenceList(query = ''): Promise<void> {
 
   const getVisitedAt = (title: string) => refVisits.getStats(title).lastVisited;
   const { summaries, total } = query
-    ? await searchReferencePages(query, REFERENCE_LIST_LIMIT, refListSort, getVisitedAt)
-    : await listReferencePages(REFERENCE_LIST_LIMIT, refListSort, getVisitedAt);
+    ? await searchReferencePages(query, REFERENCE_LIST_LIMIT, refSort, getVisitedAt)
+    : await listReferencePages(REFERENCE_LIST_LIMIT, refSort, getVisitedAt);
   const truncatedNote =
     total > summaries.length ? `<p class="muted">先頭${summaries.length}件のみ表示中（全${total}件）。検索で絞り込めます。</p>` : '';
 
@@ -594,7 +622,7 @@ async function renderReferenceList(query = ''): Promise<void> {
       <input id="ref-search" class="quick-open" placeholder="検索（タイトル・本文）" value="${escapeAttr(query)}">
       <div class="sort-bar">
         <label for="ref-list-sort">並び替え</label>
-        ${sortSelectHtml('ref-list-sort', REF_SORT_LABELS, refListSort)}
+        ${sortSelectHtml('ref-list-sort', REF_SORT_LABELS, refSort)}
       </div>
       ${truncatedNote}
       <ul class="page-list">
@@ -620,7 +648,8 @@ async function renderReferenceList(query = ''): Promise<void> {
     searchInput.setSelectionRange(query.length, query.length);
   }
   document.getElementById('ref-list-sort')?.addEventListener('change', (e) => {
-    refListSort = (e.target as HTMLSelectElement).value as ReferenceSortKey;
+    refSort = (e.target as HTMLSelectElement).value as ReferenceSortKey;
+    saveSort(REF_SORT_KEY, refSort);
     void renderReferenceList(query);
   });
 }
