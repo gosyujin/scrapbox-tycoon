@@ -81,6 +81,11 @@ body {
   padding: 24px 16px 80px;
 }
 
+#editor {
+  min-height: 4em;
+  cursor: text;
+}
+
 .linked {
   margin-top: 48px;
   padding-top: 16px;
@@ -101,38 +106,40 @@ body {
 a { color: var(--link); }
 .muted { color: var(--muted); font-size: 13px; }
 
-.line-row { min-height: 1.6em; }
-
-.line-view, .line-edit {
+.line-view {
   padding: 3px 6px;
   border-radius: 4px;
   line-height: 1.6;
   font-size: 15px;
+  cursor: text;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 1.6em;
 }
-.line-view.line-title, .line-edit.line-title {
+.line-view.line-title {
   font-size: 22px;
   font-weight: 700;
   margin-bottom: 6px;
 }
-.line-view {
-  cursor: text;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 .line-view:hover { background: var(--accent); }
 .line-view:empty::before { content: '\00a0'; }
 
-.line-edit {
+.page-edit {
   display: block;
   width: 100%;
+  min-height: 4em;
+  padding: 3px 6px;
+  border-radius: 4px;
   resize: none;
   border: 1px solid var(--link);
   background: var(--accent);
   color: var(--fg);
   font-family: inherit;
+  font-size: 15px;
+  line-height: 1.6;
   overflow: hidden;
 }
-.line-edit:focus { outline: none; }
+.page-edit:focus { outline: none; }
 
 .link.internal { text-decoration: none; border-bottom: 1px solid var(--link); }
 .link.tag { text-decoration: none; }
