@@ -184,6 +184,26 @@ body {
 .linked ul { list-style: none; padding: 0; margin: 0; }
 .linked li { margin-bottom: 6px; }
 
+.home-ref-section {
+  margin-top: 40px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.home-ref-section h2 {
+  font-size: 16px;
+  margin: 0 0 8px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.muted-link {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .page-list { list-style: none; padding: 0; }
 .page-list li {
   display: flex;

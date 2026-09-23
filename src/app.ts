@@ -157,7 +157,7 @@ function topBar(): string {
       <a href="#/" class="brand">scrapbox-tycoon</a>
       <div class="quick-open-row">
         <button id="quick-add" class="quick-add" title="ページを追加" aria-label="ページを追加">+</button>
-        <input id="quick-open" class="quick-open" placeholder="ページを開く/作成 (Enter)" />
+        <input id="quick-open" class="quick-open" placeholder="開く/作成 (Enter) ・ 一覧では検索にも使えます" />
       </div>
       <nav>
         <a href="#/ref">参照</a>
@@ -190,8 +190,53 @@ function wireQuickOpen(): void {
   });
 }
 
-async function renderPageList(): Promise<void> {
-  const pages = await store.listPages();
+const HOME_REF_LIMIT = 30;
+
+async function renderPageList(query = ''): Promise<void> {
+  // Only a debounced re-render triggered by typing in #quick-open should
+  // restore focus/caret afterward -- app.innerHTML below destroys the old
+  // input, so this has to be captured before that happens. A plain
+  // navigation to #/ should not steal focus and pop the keyboard.
+  const hadFocus = (document.activeElement as HTMLElement | null)?.id === 'quick-open';
+
+  const q = query.trim().toLowerCase();
+  let pages = await store.listPages();
+  if (q) {
+    const matched: typeof pages = [];
+    for (const p of pages) {
+      if (p.title.toLowerCase().includes(q)) {
+        matched.push(p);
+        continue;
+      }
+      const full = await store.getPage(p.title);
+      if (full && full.lines.some((line) => line.toLowerCase().includes(q))) matched.push(p);
+    }
+    pages = matched;
+  }
+
+  const refMeta = await getReferenceMeta();
+  let refSection = '';
+  if (refMeta) {
+    const { summaries, total } = query ? await searchReferencePages(query, HOME_REF_LIMIT) : { summaries: [], total: refMeta.pageCount };
+    const listHtml =
+      summaries
+        .map(
+          (p) =>
+            `<li><a href="#/ref/${encodeURIComponent(p.title)}">${escapeHtml(p.title)}</a>
+          <span class="muted">${new Date(p.updated * 1000).toLocaleString()}</span></li>`
+        )
+        .join('') || '<li class="muted">一致するページがありません。</li>';
+    const moreNote =
+      total > summaries.length
+        ? `<p class="muted">先頭${summaries.length}件のみ表示中（全${total}件）。<a href="#/ref">参照一覧</a>で続きを検索できます。</p>`
+        : '';
+    refSection = `
+      <section class="home-ref-section">
+        <h2>参照プロジェクト (${total}) <a class="muted-link" href="#/ref">全件を見る →</a></h2>
+        ${query ? `<ul class="page-list">${listHtml}</ul>${moreNote}` : '<p class="muted">検索すると本文も含めて絞り込めます。</p>'}
+      </section>`;
+  }
+
   app.innerHTML = `
     ${topBar()}
     <div class="content">
@@ -204,11 +249,33 @@ async function renderPageList(): Promise<void> {
                 `<li><a href="#/page/${encodeURIComponent(p.title)}">${escapeHtml(p.title)}</a>
               <span class="muted">${new Date(p.updated * 1000).toLocaleString()}</span></li>`
             )
-            .join('') || '<li class="muted">まだページがありません。上の入力欄から作成してください。</li>'
+            .join('') ||
+          (query ? '<li class="muted">一致するページがありません。</li>' : '<li class="muted">まだページがありません。上の入力欄から作成してください。</li>')
         }
       </ul>
+      ${refSection}
     </div>`;
   wireQuickOpen();
+
+  const input = document.getElementById('quick-open') as HTMLInputElement;
+  input.value = query;
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  input.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    const nextQuery = input.value;
+    debounceTimer = setTimeout(() => {
+      // Enter (still bound to "open/create this exact title", see
+      // wireQuickOpen) or a result link can navigate away before this
+      // fires; without this check that stale render would clobber
+      // whatever page we navigated to.
+      if (!document.body.contains(input)) return;
+      void renderPageList(nextQuery);
+    }, 250);
+  });
+  if (hadFocus) {
+    input.focus();
+    input.setSelectionRange(query.length, query.length);
+  }
 }
 
 // Scrapbox's own behavior when a rename collides with an existing page: ask
@@ -402,7 +469,12 @@ async function renderReferenceList(query = ''): Promise<void> {
   searchInput.addEventListener('input', () => {
     clearTimeout(debounceTimer);
     const q = searchInput.value;
-    debounceTimer = setTimeout(() => void renderReferenceList(q), 250);
+    debounceTimer = setTimeout(() => {
+      // Clicking a result can navigate away before this fires; without this
+      // check that stale render would clobber whatever page we're now on.
+      if (!document.body.contains(searchInput)) return;
+      void renderReferenceList(q);
+    }, 250);
   });
   if (hadSearchFocus) {
     // Typing moves the caret to the end of the freshly-rendered input by
