@@ -141,6 +141,15 @@ async function renderPageList(): Promise<void> {
   wireQuickOpen();
 }
 
+// Scrapbox's own behavior when a rename collides with an existing page: ask
+// whether to merge, and if not, keep both by suffixing _2 (_3, ... if that
+// is *also* taken) rather than silently overwriting the existing page.
+async function uniqueTitle(base: string): Promise<string> {
+  let n = 2;
+  while (await store.getPage(`${base}_${n}`)) n++;
+  return `${base}_${n}`;
+}
+
 async function renderPage(title: string): Promise<void> {
   const existing = await store.getPage(title);
   const isNew = !existing;
@@ -169,7 +178,26 @@ async function renderPage(title: string): Promise<void> {
     container: editorEl,
     lines: page.lines,
     onChange: async (lines) => {
-      const newTitle = lines[0] || currentTitle;
+      let newTitle = lines[0] || currentTitle;
+
+      if (newTitle !== currentTitle) {
+        const collision = await store.getPage(newTitle);
+        if (collision) {
+          const merge = confirm(
+            `"${newTitle}" は既に存在するページです。\n\n` +
+              'OK: このページを既存ページの末尾に統合する\n' +
+              'キャンセル: 別ページとして保存する（タイトルに _2 などを付加）'
+          );
+          if (merge) {
+            const separator = collision.lines[collision.lines.length - 1] === '' ? [] : [''];
+            lines = [...collision.lines, ...separator, ...lines.slice(1)];
+          } else {
+            newTitle = await uniqueTitle(newTitle);
+            lines = [newTitle, ...lines.slice(1)];
+          }
+        }
+      }
+
       await store.savePage({ title: newTitle, lines });
       if (newTitle !== currentTitle) {
         if (existsLocally) await store.deletePage(currentTitle);
