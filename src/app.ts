@@ -692,7 +692,9 @@ async function renderReferencePage(title: string): Promise<void> {
 async function renderSettings(): Promise<void> {
   const syncSection = isSyncCapable(store)
     ? `<p class="muted" id="sync-status-line">${escapeHtml(describeSyncStatus(store.getSyncStatus()))}</p>
-       <button id="sync-now">今すぐ同期</button>`
+       <button id="sync-now">今すぐ同期</button>
+       <button id="cleanup-orphans-btn" class="secondary">同期先の孤立ページを確認して削除</button>
+       <p id="cleanup-status" class="muted"></p>`
     : '';
 
   const refMeta = await getReferenceMeta();
@@ -748,6 +750,30 @@ async function renderSettings(): Promise<void> {
       void syncStore.syncNow().catch(() => {
         /* status line already reflects the error */
       });
+    });
+
+    document.getElementById('cleanup-orphans-btn')!.addEventListener('click', async () => {
+      const status = document.getElementById('cleanup-status') as HTMLElement;
+      status.textContent = '確認中...';
+      try {
+        const orphans = await syncStore.listOrphanedRemotePages();
+        if (orphans.length === 0) {
+          status.textContent = '孤立ページはありませんでした。';
+          return;
+        }
+        const ok = confirm(
+          `このブラウザには存在しない ${orphans.length} 件のページが同期先に残っています:\n\n${orphans.join('\n')}\n\n削除しますか？（他の端末でまだ未同期の変更がある場合、そのページも消えます）`
+        );
+        if (!ok) {
+          status.textContent = 'キャンセルしました。';
+          return;
+        }
+        status.textContent = '削除中...';
+        await syncStore.deleteOrphanedRemotePages(orphans);
+        status.textContent = `${orphans.length} 件のページを同期先から削除しました。`;
+      } catch (err) {
+        status.textContent = `失敗: ${(err as Error).message}`;
+      }
     });
   }
 

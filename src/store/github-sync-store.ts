@@ -134,6 +134,31 @@ export class GitHubSyncStore implements Store, SyncCapable {
     clearTimeout(this.debounceTimer);
   }
 
+  async listOrphanedRemotePages(): Promise<string[]> {
+    // Settle any pending local edits first -- a page that's simply mid-sync
+    // (dirty locally, not yet pushed) would otherwise briefly look
+    // "orphaned" on the remote the wrong way around.
+    await this.syncNow();
+    const localTitles = new Set((await this.local.listPages()).map((p) => p.title));
+    const remoteEntries = await this.remote.listPages();
+    return remoteEntries.map((e) => e.title).filter((t) => !localTitles.has(t));
+  }
+
+  // Pushes a direct deletion for exactly the given titles, bypassing the
+  // local dirty/deleted queue -- there's nothing to mark dirty for a page
+  // this device never had locally to begin with. One-off maintenance for
+  // pages a past sync bug could leave stranded on the remote forever (see
+  // push()'s comment); not part of the normal edit path.
+  async deleteOrphanedRemotePages(titles: string[]): Promise<void> {
+    if (titles.length === 0) return;
+    await this.remote.pushBatch(
+      titles.map((title) => ({ title, lines: null })),
+      `cleanup: remove ${titles.length} orphaned remote page(s)`
+    );
+    for (const title of titles) delete this.meta.lastSyncedUpdated[title];
+    writeMeta(this.meta);
+  }
+
   private markDirty(title: string): void {
     if (!this.meta.dirty.includes(title)) this.meta.dirty.push(title);
     this.meta.deleted = this.meta.deleted.filter((t) => t !== title);

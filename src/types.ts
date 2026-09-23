@@ -51,4 +51,14 @@ export interface SyncCapable {
   // replacing it with a freshly-configured one) so its debounce timer
   // cannot fire later and race the replacement.
   dispose(): void;
+  // Maintenance for pages the remote still has but this device's local
+  // store does not -- normally that only happens transiently (another
+  // device hasn't synced yet), but a past sync bug could leave a page
+  // stuck on the remote forever after it was deleted/merged away locally
+  // (see github-sync-store.ts). listOrphanedRemotePages() is read-only
+  // (it does sync first, to settle any pending local changes before
+  // comparing); deleteOrphanedRemotePages() removes exactly the titles
+  // passed in, so the caller can show them for confirmation first.
+  listOrphanedRemotePages(): Promise<string[]>;
+  deleteOrphanedRemotePages(titles: string[]): Promise<void>;
 }
