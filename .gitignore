@@ -1,3 +1,6 @@
 node_modules/
 /js/
 /build-info.json
+# Notes data belongs in a separate private repo (scrapbox-tycoon-notes), not
+# in this public app-code repo -- see settings, backend: GitHub.
+/pages/
