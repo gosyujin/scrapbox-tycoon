@@ -268,12 +268,14 @@ h1, h2, h3 {
 .line-view {
   padding: 3px 6px;
   border-radius: 4px;
-  line-height: 1.6;
+  /* Matched against .edit-layer's line-height so a line's rendered height
+     doesn't visibly jump when switching between view and edit mode. */
+  line-height: 1.4;
   font-size: 15px;
   cursor: text;
   white-space: pre-wrap;
   word-break: break-word;
-  min-height: 1.6em;
+  min-height: 1.4em;
 }
 .line-view.line-title {
   /* Bold-only, not larger -- a bigger font here than the edit-mode

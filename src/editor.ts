@@ -205,11 +205,17 @@ export class Editor {
       return;
     }
     if (this.editing) return;
-    if (e.key !== 'i' || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key !== 'i' && e.key !== 'o') return;
     const target = e.target as HTMLElement | null;
     if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
     e.preventDefault();
-    this.enterEdit();
+    if (e.key === 'i') {
+      this.enterEdit(0); // vim's i: caret before everything, at the very start
+    } else {
+      // vim's o: open a new blank line after the last one and land on it.
+      this.enterEdit(null, true);
+    }
   }
 
   private handleContainerClick(e: MouseEvent): void {
@@ -262,7 +268,11 @@ export class Editor {
     renderLinesInto(this.container, this.lines, this.renderOpts);
   }
 
-  private enterEdit(caretOffset: number | null = null): void {
+  // appendBlankLine: for the "o" shortcut -- opens a genuinely new blank
+  // line at the end of the buffer (not just a caret position within the
+  // existing content) and, combined with caretOffset left at its default
+  // (null = end), lands the caret on that new line.
+  private enterEdit(caretOffset: number | null = null, appendBlankLine = false): void {
     this.editing = true;
     this.container.innerHTML = '';
 
@@ -276,7 +286,7 @@ export class Editor {
 
     const ta = document.createElement('textarea');
     ta.className = 'page-edit edit-layer';
-    ta.value = this.lines.join('\n');
+    ta.value = this.lines.join('\n') + (appendBlankLine ? '\n' : '');
     this.textarea = ta;
 
     const sync = () => {
