@@ -160,10 +160,21 @@ export async function getPage(title: string): Promise<ReferencePage | null> {
 
 export interface ReferenceSummary {
   title: string;
+  description: string;
   updated: number;
   created: number;
   views: number;
   linkedCount: number;
+}
+
+// The card preview text: everything but the title line, blank lines
+// dropped, joined into one run -- CSS clips it to however much fits.
+function pageDescription(lines: string[]): string {
+  return lines
+    .slice(1)
+    .filter((l) => l.trim() !== '')
+    .join(' ')
+    .slice(0, 300);
 }
 
 export type SortKey = 'modified' | 'created' | 'linked' | 'viewed' | 'title' | 'lastVisited';
@@ -190,7 +201,14 @@ function compareBy(sort: SortKey, getVisitedAt: (title: string) => number): (a: 
 }
 
 function toSummary(p: ReferencePage): ReferenceSummary {
-  return { title: p.title, updated: p.updated, created: p.created, views: p.views, linkedCount: p.linkedCount };
+  return {
+    title: p.title,
+    description: pageDescription(p.lines),
+    updated: p.updated,
+    created: p.created,
+    views: p.views,
+    linkedCount: p.linkedCount,
+  };
 }
 
 // A single cursor pass over every page. 10k pages / a few MB of text is

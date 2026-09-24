@@ -319,8 +319,21 @@ let refSort: ReferenceSortKey = loadSort(REF_SORT_KEY, REF_SORT_LABELS, 'modifie
 
 interface NoteRow {
   title: string;
+  description: string;
   created: number;
   updated: number;
+}
+
+// The card preview text: everything but the title line (lines[0]), blank
+// lines dropped, joined into one run -- CSS does the actual clipping to
+// however much fits in a card, this just avoids handing it megabytes of
+// full page text to lay out and then throw away.
+function pageDescription(lines: string[]): string {
+  return lines
+    .slice(1)
+    .filter((l) => l.trim() !== '')
+    .join(' ')
+    .slice(0, 300);
 }
 
 async function loadNoteRows(query: string): Promise<NoteRow[]> {
@@ -330,9 +343,26 @@ async function loadNoteRows(query: string): Promise<NoteRow[]> {
     const full = await store.getPage(s.title);
     if (!full) continue;
     if (!matchQuery(full.lines.join('\n'), query)) continue;
-    rows.push({ title: full.title, created: full.created, updated: full.updated });
+    rows.push({ title: full.title, description: pageDescription(full.lines), created: full.created, updated: full.updated });
   }
   return rows;
+}
+
+// Shared by the notes list, the home page's reference section, and #/ref's
+// full list -- Scrapbox-style square cards (title + as much body text as
+// fits) instead of a plain link-per-row list.
+function pageCardsHtml(items: { title: string; description: string }[], linkBase: string, emptyMessage: string): string {
+  if (items.length === 0) return `<p>${escapeHtml(emptyMessage)}</p>`;
+  const cards = items
+    .map(
+      (p) => `
+      <a class="page-card" href="${linkBase}${encodeURIComponent(p.title)}">
+        <div class="page-card-title">${escapeHtml(p.title)}</div>
+        <div class="page-card-desc">${escapeHtml(p.description)}</div>
+      </a>`
+    )
+    .join('');
+  return `<div class="page-cards">${cards}</div>`;
 }
 
 // One full-content pass tallying how many *other* notes link to each note
@@ -396,18 +426,8 @@ async function renderPageList(query = ''): Promise<void> {
     const { summaries, total } = query
       ? await searchReferencePages(query, HOME_REF_LIMIT, refSort, getVisitedAt)
       : await listReferencePages(HOME_REF_LIMIT, refSort, getVisitedAt);
-    const listHtml =
-      summaries
-        .map(
-          (p) =>
-            `<li><a href="#/ref/${encodeURIComponent(p.title)}">${escapeHtml(p.title)}</a>
-          <span class="muted">${new Date(p.updated * 1000).toLocaleString()}</span></li>`
-        )
-        .join('') || '<li class="muted">一致するページがありません。</li>';
     const moreNote =
-      total > summaries.length
-        ? `<p class="muted">先頭${summaries.length}件のみ表示中（全${total}件）。<a href="#/ref">参照一覧</a>で続きを検索できます。</p>`
-        : '';
+      total > summaries.length ? `<p>先頭${summaries.length}件のみ表示中（全${total}件）。<a href="#/ref">参照一覧</a>で続きを検索できます。</p>` : '';
     refSection = `
       <section class="home-ref-section">
         <h2>参照プロジェクト (${total}) <a class="muted-link" href="#/ref">全件を見る →</a></h2>
@@ -415,7 +435,7 @@ async function renderPageList(query = ''): Promise<void> {
           <label for="home-ref-sort">並び替え</label>
           ${sortSelectHtml('home-ref-sort', REF_SORT_LABELS, refSort)}
         </div>
-        <ul class="page-list">${listHtml}</ul>
+        ${pageCardsHtml(summaries, '#/ref/', '一致するページがありません。')}
         ${moreNote}
       </section>`;
   }
@@ -428,18 +448,7 @@ async function renderPageList(query = ''): Promise<void> {
         <label for="home-note-sort">並び替え</label>
         ${sortSelectHtml('home-note-sort', NOTE_SORT_LABELS, homeNoteSort)}
       </div>
-      <ul class="page-list">
-        ${
-          rows
-            .map(
-              (p) =>
-                `<li><a href="#/page/${encodeURIComponent(p.title)}">${escapeHtml(p.title)}</a>
-              <span class="muted">${new Date(p.updated * 1000).toLocaleString()}</span></li>`
-            )
-            .join('') ||
-          (query ? '<li class="muted">一致するページがありません。</li>' : '<li class="muted">まだページがありません。上の入力欄から作成してください。</li>')
-        }
-      </ul>
+      ${pageCardsHtml(rows, '#/page/', query ? '一致するページがありません。' : 'まだページがありません。上の入力欄から作成してください。')}
       ${refSection}
     </div>`;
   wireQuickOpen();
@@ -633,7 +642,7 @@ async function renderReferenceList(): Promise<void> {
   const getVisitedAt = (title: string) => refVisits.getStats(title).lastVisited;
   const { summaries, total } = await listReferencePages(REFERENCE_LIST_LIMIT, refSort, getVisitedAt);
   const truncatedNote =
-    total > summaries.length ? `<p class="muted">先頭${summaries.length}件のみ表示中（全${total}件）。ホームの検索で絞り込めます。</p>` : '';
+    total > summaries.length ? `<p>先頭${summaries.length}件のみ表示中（全${total}件）。ホームの検索で絞り込めます。</p>` : '';
 
   app.innerHTML = `
     ${topBar()}
@@ -645,17 +654,7 @@ async function renderReferenceList(): Promise<void> {
         ${sortSelectHtml('ref-list-sort', REF_SORT_LABELS, refSort)}
       </div>
       ${truncatedNote}
-      <ul class="page-list">
-        ${
-          summaries
-            .map(
-              (p) =>
-                `<li><a href="#/ref/${encodeURIComponent(p.title)}">${escapeHtml(p.title)}</a>
-              <span class="muted">${new Date(p.updated * 1000).toLocaleString()}</span></li>`
-            )
-            .join('') || '<li class="muted">一致するページがありません。</li>'
-        }
-      </ul>
+      ${pageCardsHtml(summaries, '#/ref/', '一致するページがありません。')}
     </div>`;
   wireQuickOpen();
 
