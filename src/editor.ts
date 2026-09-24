@@ -89,6 +89,22 @@ function getCaretCoordinates(ta: HTMLTextAreaElement, position: number): { top: 
   return { top, left, height: lineHeight };
 }
 
+// Character offset -> {line, col} and back, against an arbitrary \n-joined
+// string/line array (not tied to a particular Editor instance) -- used by
+// the line-move and indent/outdent keyboard commands below to translate a
+// selection into line indices, edit the lines array, and then translate
+// back so the caret/selection lands in the equivalent spot afterward.
+function lineColOf(value: string, offset: number): { line: number; col: number } {
+  const before = value.slice(0, offset);
+  const lastNewline = before.lastIndexOf('\n');
+  return { line: before.split('\n').length - 1, col: before.length - lastNewline - 1 };
+}
+function offsetOfLineCol(lines: string[], line: number, col: number): number {
+  let offset = 0;
+  for (let i = 0; i < line; i++) offset += (lines[i]?.length ?? 0) + 1;
+  return offset + col;
+}
+
 export interface EditorOptions {
   container: HTMLElement;
   lines: string[];
@@ -199,6 +215,18 @@ export class Editor {
       if (e.key === 'Escape') {
         e.preventDefault();
         ta.blur();
+        return;
+      }
+      // Plain ctrl+arrow only -- not ctrl+shift+arrow or ctrl+alt+arrow,
+      // which some platforms/extensions already bind to something else.
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          e.preventDefault();
+          this.moveLines(e.key === 'ArrowUp' ? -1 : 1);
+        } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+          e.preventDefault();
+          this.indentLines(e.key === 'ArrowRight' ? 1 : -1);
+        }
       }
     });
 
@@ -369,5 +397,88 @@ export class Editor {
       // didn't get created (e.g. a save error) -- same recoverable state
       // as any other failed save in this app, nothing extra to do here.
     }
+  }
+
+  // --- ctrl+arrow: move current line(s) up/down, indent/outdent ---
+
+  // {from, to} are 0-indexed, inclusive line numbers covering the current
+  // selection (or just the caret's own line, if nothing is selected).
+  private selectedLineRange(ta: HTMLTextAreaElement): { from: number; to: number } {
+    const startPos = lineColOf(ta.value, ta.selectionStart);
+    const endPos = lineColOf(ta.value, ta.selectionEnd);
+    let to = endPos.line;
+    // A selection that ends exactly at column 0 of a later line (e.g. two
+    // full lines picked via shift+Down twice) has nothing highlighted on
+    // that line -- exclude it, matching most editors' line-oriented commands.
+    if (to > startPos.line && endPos.col === 0) to -= 1;
+    return { from: startPos.line, to };
+  }
+
+  private moveLines(direction: -1 | 1): void {
+    const ta = this.textarea;
+    if (!ta) return;
+    const lines = ta.value.split('\n');
+    const { from, to } = this.selectedLineRange(ta);
+    if (direction === -1 && from === 0) return; // already at the top
+    if (direction === 1 && to === lines.length - 1) return; // already at the bottom
+
+    // Swap the selected block with the single adjacent line it's moving
+    // past, by pulling that line out and reinserting it on the far side of
+    // the block -- simpler than recomputing every index by hand.
+    const startPos = lineColOf(ta.value, ta.selectionStart);
+    const endPos = lineColOf(ta.value, ta.selectionEnd);
+    if (direction === -1) {
+      const above = lines[from - 1];
+      lines.splice(from - 1, 1);
+      lines.splice(to, 0, above ?? '');
+    } else {
+      const below = lines[to + 1];
+      lines.splice(to + 1, 1);
+      lines.splice(from, 0, below ?? '');
+    }
+
+    ta.value = lines.join('\n');
+    ta.dispatchEvent(new Event('input')); // re-run the autosize listener
+    ta.focus();
+    // Content within the moved lines is unchanged, only shifted by one
+    // line -- so the same {line, col} pair, offset by `direction`, is
+    // exactly where the selection should end up.
+    const newStart = offsetOfLineCol(lines, startPos.line + direction, startPos.col);
+    const newEnd = offsetOfLineCol(lines, endPos.line + direction, endPos.col);
+    ta.setSelectionRange(newStart, newEnd);
+  }
+
+  private indentLines(direction: 1 | -1): void {
+    const ta = this.textarea;
+    if (!ta) return;
+    const lines = ta.value.split('\n');
+    const { from, to } = this.selectedLineRange(ta);
+    const startPos = lineColOf(ta.value, ta.selectionStart);
+    const endPos = lineColOf(ta.value, ta.selectionEnd);
+    // How much each touched line's own column offsets shift by -- only the
+    // lines actually changed (outdenting a line with no leading space is a
+    // no-op) get a delta, so the caret/selection tracks precisely.
+    const colDelta = new Map<number, number>();
+
+    for (let i = from; i <= to; i++) {
+      const line = lines[i] ?? '';
+      if (direction === 1) {
+        lines[i] = ' ' + line;
+        colDelta.set(i, 1);
+      } else if (line.startsWith(' ') || line.startsWith('\t') || line.startsWith('　')) {
+        lines[i] = line.slice(1);
+        colDelta.set(i, -1);
+      }
+    }
+    if (colDelta.size === 0) return; // outdent with nothing to remove -- leave the caret alone
+
+    ta.value = lines.join('\n');
+    ta.dispatchEvent(new Event('input'));
+    ta.focus();
+    const newStartCol = Math.max(0, startPos.col + (colDelta.get(startPos.line) ?? 0));
+    const newEndCol = Math.max(0, endPos.col + (colDelta.get(endPos.line) ?? 0));
+    const newStart = offsetOfLineCol(lines, startPos.line, newStartCol);
+    const newEnd = offsetOfLineCol(lines, endPos.line, newEndCol);
+    ta.setSelectionRange(newStart, newEnd);
   }
 }
