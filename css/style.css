@@ -1,5 +1,9 @@
 :root {
   --bg: #ffffff;
+  /* Scrapbox's own layout: the page body (title + content) sits as a
+     white "card" on a tinted page background, not the other way around --
+     see #editor/#ref-view below. */
+  --page-bg: #eef0f2;
   --fg: #1a1a1a;
   --muted: #8a8a8a;
   --border: #e3e3e3;
@@ -14,6 +18,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1b1c1d;
+    --page-bg: #131415;
     --fg: #e8e8e8;
     --muted: #8a8a8a;
     --border: #333;
@@ -49,7 +54,7 @@ body {
   width: 100%;
   touch-action: pan-y;
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
-  background: var(--bg);
+  background: var(--page-bg);
   color: var(--fg);
   overflow-x: hidden;
 }
@@ -62,7 +67,7 @@ body {
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
-  background: var(--bg);
+  background: var(--page-bg);
   z-index: 10;
 }
 
@@ -142,10 +147,19 @@ body {
   padding: 24px 16px 80px;
 }
 
-#editor {
+/* The page body itself (editable or read-only reference) as a white card
+   against the tinted page background -- so it's clear at a glance where
+   the actual page content starts and ends, vs. surrounding chrome like
+   the merge banner or the backlinks section below it. */
+#editor,
+#ref-view {
   min-height: 4em;
-  cursor: text;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 12px 16px;
 }
+
+#editor { cursor: text; }
 
 .merge-banner {
   display: flex;
