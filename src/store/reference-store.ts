@@ -228,6 +228,18 @@ export async function getAllTitlesLowercased(): Promise<Set<string>> {
   return new Set(keys.map((k) => String(k).toLowerCase()));
 }
 
+// Original-cased titles (unlike getAllTitlesLowercased, which throws away
+// casing for exists/missing comparison) -- for anything that needs to
+// actually navigate to or display a title, e.g. the home page's "ランダム"
+// button.
+export async function getAllTitles(): Promise<string[]> {
+  const db = await openDb();
+  const tx = db.transaction(PAGES_STORE, 'readonly');
+  const keys = await reqResult<IDBValidKey[]>(tx.objectStore(PAGES_STORE).getAllKeys());
+  db.close();
+  return keys.map((k) => String(k));
+}
+
 export async function listPages(
   limit: number,
   sort: SortKey = 'modified',

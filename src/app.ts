@@ -12,6 +12,7 @@ import {
   searchPages as searchReferencePages,
   getBacklinks as getReferenceBacklinksRaw,
   getAllTitlesLowercased as getReferenceTitles,
+  getAllTitles as getAllReferenceTitles,
   type SortKey as ReferenceSortKey,
 } from './store/reference-store.js';
 import { makeVisitTracker } from './visit-tracking.js';
@@ -214,15 +215,36 @@ function topBar(): string {
         <input id="quick-open" class="quick-open" placeholder="開く/作成 (Enter) ・ 一覧では検索にも使えます" />
       </div>
       <nav>
-        <a href="#/ref">参照</a>
+        <button id="random-btn" class="nav-btn" type="button">ランダム</button>
         <a href="#/settings">設定</a>
       </nav>
     </div>`;
 }
 
+// Picks a random page from the reference project and jumps straight to it
+// -- ported from scrapbox-pwa-viewer's random-page button, which this
+// replaces the header's old "参照" link with (the reference list itself is
+// still reachable from the home page's reference section). One retry if
+// the pick happens to be the page already open, so the button doesn't
+// visibly do nothing on a lucky/unlucky repeat.
+async function goToRandomReferencePage(): Promise<void> {
+  const titles = await getAllReferenceTitles();
+  if (titles.length === 0) return;
+  const currentTitle =
+    location.hash.startsWith('#/ref/') ? decodeURIComponent(location.hash.slice('#/ref/'.length)) : null;
+  let pick = titles[Math.floor(Math.random() * titles.length)]!;
+  if (titles.length > 1 && pick === currentTitle) {
+    pick = titles[Math.floor(Math.random() * titles.length)]!;
+  }
+  navigate(`#/ref/${encodeURIComponent(pick)}`);
+}
+
 function wireQuickOpen(): void {
   const input = document.getElementById('quick-open') as HTMLInputElement;
   const addBtn = document.getElementById('quick-add') as HTMLButtonElement;
+  document.getElementById('random-btn')!.addEventListener('click', () => {
+    void goToRandomReferencePage();
+  });
   let composing = false;
   input.addEventListener('compositionstart', () => {
     composing = true;

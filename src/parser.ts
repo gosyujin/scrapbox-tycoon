@@ -295,8 +295,30 @@ function stripCommonIndent(blockLines: string[]): string {
   return blockLines.map((l) => (l.length >= base ? l.slice(base) : '')).join('\n');
 }
 
+// Ported from scrapbox-pwa-viewer's `ul.outline ul.outline { border-left:
+// 1px solid var(--border) }`, which draws one guide per nesting level for
+// free because each level is a genuinely nested <ul>. This app deliberately
+// renders one flat div per line instead (see this file's header comment --
+// nesting would fight the editor's line-index-based click-to-caret), so
+// there's no nested box for a stylesheet rule to hang a border off of.
+// A static background-image with one sharp 1px vertical line per ancestor
+// level, positioned at that ancestor's own text column (0.6em + one 1.2em
+// step per level, matching the padding-left below), reproduces the same
+// "descending tree line" look on a single element.
+function indentGuideBackground(depth: number): string {
+  const stops: string[] = [];
+  for (let level = 1; level <= depth; level++) {
+    const x = 0.6 + (level - 1) * 1.2;
+    stops.push(`transparent ${x}em`, `var(--border) ${x}em`, `var(--border) calc(${x}em + 1px)`, `transparent calc(${x}em + 1px)`);
+  }
+  return `linear-gradient(to right, ${stops.join(', ')})`;
+}
+
 function applyIndent(el: HTMLElement, depth: number): void {
-  if (depth > 0) el.style.paddingLeft = `${0.6 + depth * 1.2}em`;
+  if (depth > 0) {
+    el.style.paddingLeft = `${0.6 + depth * 1.2}em`;
+    el.style.backgroundImage = indentGuideBackground(depth);
+  }
 }
 
 // .indent-bullet's own width (1em) + margin-right (0.2em) in css/style.css.
@@ -314,6 +336,7 @@ const BULLET_WIDTH_EM = 1.2;
 function applyBulletIndent(el: HTMLElement, depth: number): void {
   el.style.paddingLeft = `${0.6 + depth * 1.2 + BULLET_WIDTH_EM}em`;
   el.style.textIndent = `-${BULLET_WIDTH_EM}em`;
+  el.style.backgroundImage = indentGuideBackground(depth);
 }
 
 // Shared by the editable-page view (editor.ts) and the read-only

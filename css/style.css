@@ -8,6 +8,7 @@
   --link-missing: #b23b3b;
   --link-external: #1a7f37;
   --code-bg: #f0f1f3;
+  --quote-border: #c7cdd6;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -21,6 +22,7 @@
     --link-missing: #e08080;
     --link-external: #4ada6f;
     --code-bg: #262a30;
+    --quote-border: #3a3f47;
   }
 }
 
@@ -106,13 +108,22 @@ body {
   font-size: 16px; /* see .page-edit: avoids iOS Safari's zoom-on-focus */
 }
 
-.topbar nav a {
+.topbar nav a,
+.topbar nav button.nav-btn {
   margin-left: 12px;
   color: var(--fg);
   text-decoration: none;
   opacity: 0.8;
 }
-.topbar nav a:hover { opacity: 1; }
+.topbar nav a:hover,
+.topbar nav button.nav-btn:hover { opacity: 1; }
+.topbar nav button.nav-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
 
 @media (max-width: 480px) {
   .topbar {
@@ -367,9 +378,9 @@ table.sb-table td { border: 1px solid var(--border); padding: 4px 8px; }
 table.sb-table caption { text-align: left; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
 
 blockquote.sb-quote {
-  margin: 2px 0;
+  margin: 4px 0;
   padding: 2px 10px;
-  border-left: 3px solid var(--border);
+  border-left: 3px solid var(--quote-border);
   color: var(--muted);
 }
 
