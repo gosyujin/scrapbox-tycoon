@@ -189,16 +189,6 @@ body {
   color: var(--muted);
   border-color: var(--border);
 }
-.merge-banner a {
-  padding: 5px 12px;
-  border-radius: 5px;
-  border: 1px solid var(--link);
-  background: var(--link);
-  color: #fff;
-  font-size: 13px;
-  white-space: nowrap;
-  text-decoration: none;
-}
 
 .ref-banner {
   margin: 0 0 16px;

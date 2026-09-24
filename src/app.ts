@@ -504,10 +504,8 @@ async function renderPage(title: string): Promise<void> {
   // informational: the reference page stays reachable either way.
   const referenceTitles = await getReferenceTitles();
   const refDuplicateBanner = referenceTitles.has(title.toLowerCase())
-    ? `<div class="merge-banner">
-         <span>参照プロジェクトにも同名タイトル "${escapeHtml(title)}" のページがあります。</span>
-         <a href="#/ref/${encodeURIComponent(title)}">参照ページを見る</a>
-       </div>`
+    ? `<p class="ref-banner">参照プロジェクトにも同名タイトル "${escapeHtml(title)}" のページがあります。
+         <a href="#/ref/${encodeURIComponent(title)}">参照ページを見る →</a></p>`
     : '';
 
   app.innerHTML = `
