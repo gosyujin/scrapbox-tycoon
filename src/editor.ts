@@ -302,6 +302,15 @@ export class Editor {
         ta.blur();
         return;
       }
+      // isComposing excludes the Enter that *confirms* an IME conversion
+      // candidate (very common typing Japanese) -- that Enter isn't
+      // inserting a newline at all, and must reach the browser's default
+      // handling untouched or composition breaks.
+      if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
+        e.preventDefault();
+        this.insertNewlineWithIndent();
+        return;
+      }
       // A plain Tab/Shift+Tab would otherwise move focus off the textarea
       // entirely (the browser's default field-to-field behavior) -- inside
       // a page body that's much more useful as indent/outdent, matching
@@ -547,6 +556,22 @@ export class Editor {
     const newStart = offsetOfLineCol(lines, startPos.line + direction, startPos.col);
     const newEnd = offsetOfLineCol(lines, endPos.line + direction, endPos.col);
     ta.setSelectionRange(newStart, newEnd);
+  }
+
+  // Enter carries the current line's own leading whitespace onto the new
+  // line, so continuing to type after a newline stays at the same outline
+  // depth instead of resetting to depth 0 every time.
+  private insertNewlineWithIndent(): void {
+    const ta = this.textarea;
+    if (!ta) return;
+    const { value, selectionStart: start, selectionEnd: end } = ta;
+    const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+    const indent = /^[ \t　]*/.exec(value.slice(lineStart))?.[0] ?? '';
+    const insertion = '\n' + indent;
+    ta.value = value.slice(0, start) + insertion + value.slice(end);
+    const pos = start + insertion.length;
+    ta.setSelectionRange(pos, pos);
+    ta.dispatchEvent(new Event('input')); // re-run autosize + backdrop sync
   }
 
   private indentLines(direction: 1 | -1): void {
