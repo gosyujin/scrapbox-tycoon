@@ -206,12 +206,25 @@ export interface RenderOpts {
   // Scrapbox). Compute once per page render (store.listPages() /
   // reference-store's getAllTitlesLowercased()), not per link.
   knownTitles: Set<string>;
+  // Notes-only: a title not found in knownTitles falls through to this
+  // secondary namespace (the reference project) before being treated as
+  // missing -- so a note can link straight into your imported Scrapbox
+  // history. One-directional on purpose: the reference project's own
+  // links never get a fallback into notes, so a frozen snapshot's link
+  // targets don't shift as your notes change (see app.ts's renderPage).
+  fallback?: { linkBase: string; knownTitles: Set<string> };
 }
 
 function renderInternalLink(title: string, opts: RenderOpts, extraClasses: string[]): string {
-  const exists = opts.knownTitles.has(title.toLowerCase());
+  const key = title.toLowerCase();
+  let linkBase = opts.linkBase;
+  let exists = opts.knownTitles.has(key);
+  if (!exists && opts.fallback?.knownTitles.has(key)) {
+    exists = true;
+    linkBase = opts.fallback.linkBase;
+  }
   const classes = ['link', ...extraClasses, exists ? 'exists' : 'missing'];
-  return `<a class="${classes.join(' ')}" href="${opts.linkBase}${encodeURIComponent(title)}">${escapeHtml(title)}</a>`;
+  return `<a class="${classes.join(' ')}" href="${linkBase}${encodeURIComponent(title)}">${escapeHtml(title)}</a>`;
 }
 
 function renderToken(t: InlineToken, opts: RenderOpts): string {

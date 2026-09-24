@@ -497,11 +497,25 @@ async function renderPage(title: string): Promise<void> {
        </div>`
     : '';
 
+  // Notes and the reference project are separate namespaces (see the
+  // fallback comment on Editor's knownTitles below), so having the same
+  // title in both is entirely possible -- just easy to not notice, since
+  // opening this note never otherwise surfaces the reference page. Purely
+  // informational: the reference page stays reachable either way.
+  const referenceTitles = await getReferenceTitles();
+  const refDuplicateBanner = referenceTitles.has(title.toLowerCase())
+    ? `<div class="merge-banner">
+         <span>参照プロジェクトにも同名タイトル "${escapeHtml(title)}" のページがあります。</span>
+         <a href="#/ref/${encodeURIComponent(title)}">参照ページを見る</a>
+       </div>`
+    : '';
+
   app.innerHTML = `
     ${topBar()}
     <div class="content page-content">
       ${isNew ? '<p class="muted">新規ページ（最初の行を編集すると保存されます）</p>' : ''}
       ${mergeBanner}
+      ${refDuplicateBanner}
       <div id="editor"></div>
       <section class="linked">
         <h3 id="linked-heading">逆リンク</h3>
@@ -556,6 +570,7 @@ async function renderPage(title: string): Promise<void> {
     container: editorEl,
     lines: page.lines,
     knownTitles,
+    fallback: { linkBase: '#/ref/', knownTitles: referenceTitles },
     onExtractPage: async (extractedTitle, extractedLines) => {
       // Never overwrite an existing page -- selecting text that happens to
       // match an existing title should just link to it, same as Scrapbox.

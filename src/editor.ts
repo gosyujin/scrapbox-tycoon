@@ -156,6 +156,9 @@ export interface EditorOptions {
   // taken once when the page is opened -- doesn't need to track concurrent
   // edits live, same as the rest of this view.
   knownTitles: Set<string>;
+  // A link not found in knownTitles falls through to this before being
+  // treated as missing -- see parser.ts's RenderOpts.fallback.
+  fallback?: { linkBase: string; knownTitles: Set<string> };
   // Called when the user uses the selection toolbar's "ページ切り出し" button.
   // `lines` is the selected text split on '\n' (lines[0] is the new page's
   // title, same convention as every other page in this app). The caller is
@@ -180,12 +183,12 @@ export class Editor {
   private readonly boundUpdateToolbar = () => this.updateSelectionToolbar();
   private readonly boundEnterEditKey = (e: KeyboardEvent) => this.handleGlobalKeydown(e);
 
-  constructor({ container, lines, onChange, knownTitles, onExtractPage }: EditorOptions) {
+  constructor({ container, lines, onChange, knownTitles, fallback, onExtractPage }: EditorOptions) {
     this.container = container;
     this.lines = [...lines];
     this.onChange = onChange;
     this.onExtractPage = onExtractPage;
-    this.renderOpts = { linkBase: '#/page/', knownTitles };
+    this.renderOpts = { linkBase: '#/page/', knownTitles, fallback };
     this.container.addEventListener('click', (e) => this.handleContainerClick(e));
     // vim-flavored "press i to start editing" when nothing else has focus
     // (a real input/textarea/contenteditable elsewhere still just types
