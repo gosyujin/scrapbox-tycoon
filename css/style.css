@@ -330,6 +330,16 @@ h1, h2, h3 {
   white-space: pre-wrap;
   word-break: break-word;
   tab-size: 4;
+  /* Widens every space character itself (not just the backdrop's dot
+     markers) -- on the shared class so it applies identically to the real
+     textarea and the backdrop, keeping their layout in sync. A per-
+     character width (e.g. only the leading indent's spaces) isn't
+     reachable this way -- word-spacing is uniform across an element, and
+     a native <textarea> has no way to style individual characters
+     differently at all -- but widening every space still makes a run of
+     N leading spaces N times as much wider, which is the concrete "1
+     space vs. 2" problem this is for. */
+  word-spacing: 0.3em;
 }
 
 .edit-backdrop {
