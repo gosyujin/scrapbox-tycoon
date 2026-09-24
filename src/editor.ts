@@ -105,6 +105,48 @@ function offsetOfLineCol(lines: string[], line: number, col: number): number {
   return offset + col;
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Renders the edit-mode backdrop: the same text as the textarea, with
+// whitespace characters wrapped in marker spans (see .ws-mark and friends
+// in style.css) so half-width/full-width spaces and tabs are visible, and
+// the *leading* indent run of each line additionally gets a vertical guide
+// per level -- directly addresses "one leading space vs. two is hard to
+// tell apart at a glance" for outline nesting. Every marker span's content
+// is the original whitespace character, unchanged, so this never alters
+// where the browser can wrap the line relative to the real textarea (see
+// .edit-layer's comment in style.css for why that has to stay identical).
+function renderEditBackdrop(text: string): string {
+  return text.split('\n').map(renderBackdropLine).join('\n');
+}
+
+function renderBackdropLine(line: string): string {
+  const depth = splitIndent(line).depth;
+  let html = '';
+  let plain = '';
+  const flushPlain = () => {
+    if (plain) {
+      html += escapeHtml(plain);
+      plain = '';
+    }
+  };
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    const kind = ch === ' ' ? 'ws-space' : ch === '\t' ? 'ws-tab' : ch === '　' ? 'ws-ideospace' : null;
+    if (!kind) {
+      plain += ch;
+      continue;
+    }
+    flushPlain();
+    const indentClass = i < depth ? ' ws-indent' : '';
+    html += `<span class="ws-mark ${kind}${indentClass}">${ch}</span>`;
+  }
+  flushPlain();
+  return html;
+}
+
 export interface EditorOptions {
   container: HTMLElement;
   lines: string[];
@@ -131,10 +173,12 @@ export class Editor {
   private renderOpts: RenderOpts;
   private editing = false;
   private textarea: HTMLTextAreaElement | null = null;
+  private backdrop: HTMLDivElement | null = null;
   private selectionToolbar: HTMLElement | null = null;
   private selStart: number | null = null;
   private selEnd: number | null = null;
   private readonly boundUpdateToolbar = () => this.updateSelectionToolbar();
+  private readonly boundEnterEditKey = (e: KeyboardEvent) => this.handleGlobalKeydown(e);
 
   constructor({ container, lines, onChange, knownTitles, onExtractPage }: EditorOptions) {
     this.container = container;
@@ -143,7 +187,29 @@ export class Editor {
     this.onExtractPage = onExtractPage;
     this.renderOpts = { linkBase: '#/page/', knownTitles };
     this.container.addEventListener('click', (e) => this.handleContainerClick(e));
+    // vim-flavored "press i to start editing" when nothing else has focus
+    // (a real input/textarea/contenteditable elsewhere still just types
+    // normally). Stays attached for the container's whole lifetime rather
+    // than only while this specific page is showing -- see the self-
+    // cleanup check inside handleGlobalKeydown() for why that's safe: nothing
+    // else in this app ever calls Editor.dispose(), so a document-level
+    // listener has to notice on its own once its container has been
+    // discarded by a later page render.
+    document.addEventListener('keydown', this.boundEnterEditKey);
     this.renderView();
+  }
+
+  private handleGlobalKeydown(e: KeyboardEvent): void {
+    if (!document.body.contains(this.container)) {
+      document.removeEventListener('keydown', this.boundEnterEditKey);
+      return;
+    }
+    if (this.editing) return;
+    if (e.key !== 'i' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+    e.preventDefault();
+    this.enterEdit();
   }
 
   private handleContainerClick(e: MouseEvent): void {
@@ -200,21 +266,39 @@ export class Editor {
     this.editing = true;
     this.container.innerHTML = '';
 
+    const wrap = document.createElement('div');
+    wrap.className = 'edit-wrap';
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'edit-backdrop edit-layer';
+    backdrop.setAttribute('aria-hidden', 'true');
+    this.backdrop = backdrop;
+
     const ta = document.createElement('textarea');
-    ta.className = 'page-edit';
+    ta.className = 'page-edit edit-layer';
     ta.value = this.lines.join('\n');
     this.textarea = ta;
 
-    const autosize = () => {
+    const sync = () => {
       ta.style.height = 'auto';
       ta.style.height = ta.scrollHeight + 'px';
+      backdrop.innerHTML = renderEditBackdrop(ta.value);
     };
-    ta.addEventListener('input', autosize);
+    ta.addEventListener('input', sync);
 
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
         ta.blur();
+        return;
+      }
+      // A plain Tab/Shift+Tab would otherwise move focus off the textarea
+      // entirely (the browser's default field-to-field behavior) -- inside
+      // a page body that's much more useful as indent/outdent, matching
+      // ctrl+left/right's one-space-per-level convention below.
+      if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        this.indentLines(e.shiftKey ? -1 : 1);
         return;
       }
       // Plain ctrl+arrow only -- not ctrl+shift+arrow or ctrl+alt+arrow,
@@ -245,8 +329,9 @@ export class Editor {
     document.addEventListener('selectionchange', this.boundUpdateToolbar);
     window.addEventListener('scroll', this.boundUpdateToolbar, true);
 
-    this.container.appendChild(ta);
-    autosize();
+    wrap.append(backdrop, ta);
+    this.container.appendChild(wrap);
+    sync();
     // The textarea is sized to fit all its content (autosize above), so it
     // never scrolls internally -- the page scrolls instead. A plain
     // .focus() asks the browser to scroll the (now much taller) element
@@ -269,6 +354,7 @@ export class Editor {
     this.lines = ta.value.split('\n');
     this.editing = false;
     this.textarea = null;
+    this.backdrop = null;
     this.renderView();
     void this.onChange([...this.lines]);
   }
