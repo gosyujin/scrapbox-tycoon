@@ -10,7 +10,7 @@ import {
   getPage as getReferencePage,
   listPages as listReferencePages,
   searchPages as searchReferencePages,
-  getBacklinks as getReferenceBacklinksRaw,
+  getRelatedPages as getReferenceRelatedPagesRaw,
   getAllTitlesLowercased as getReferenceTitles,
   getAllTitles as getAllReferenceTitles,
   type SortKey as ReferenceSortKey,
@@ -19,8 +19,11 @@ import { makeVisitTracker } from './visit-tracking.js';
 import { matchQuery } from './search.js';
 import type { Page, Store, SyncCapable, SyncStatus } from './types.js';
 
-function getReferenceBacklinks(title: string): Promise<{ title: string; description: string }[]> {
-  return getReferenceBacklinksRaw(title, extractLinks);
+function getReferenceRelatedPages(title: string): Promise<{
+  hop1: { title: string; description: string; direction: string }[];
+  hop2: { title: string; description: string }[];
+}> {
+  return getReferenceRelatedPagesRaw(title, extractLinks);
 }
 
 // Device-local only (see visit-tracking.ts) -- separate namespaces so a
@@ -354,15 +357,23 @@ async function loadNoteRows(query: string): Promise<NoteRow[]> {
   return rows;
 }
 
-// Shared by the notes list, the home page's reference section, and #/ref's
-// full list -- Scrapbox-style square cards (title + as much body text as
-// fits) instead of a plain link-per-row list.
-function pageCardsHtml(items: { title: string; description: string }[], linkBase: string, emptyMessage: string): string {
+// Shared by the notes list, the home page's reference section, #/ref's full
+// list, and the linked-pages sections below -- Scrapbox-style square cards
+// (title + as much body text as fits) instead of a plain link-per-row list.
+// `direction`, when given (1-hop linked pages only -- see renderLinkedPages),
+// shows which way the link between this page and the current one goes:
+// → this page links to it, ← it links to this page, ⇔ both.
+function pageCardsHtml(
+  items: { title: string; description: string; direction?: string }[],
+  linkBase: string,
+  emptyMessage: string
+): string {
   if (items.length === 0) return `<p>${escapeHtml(emptyMessage)}</p>`;
   const cards = items
     .map(
       (p) => `
       <a class="page-card" href="${linkBase}${encodeURIComponent(p.title)}">
+        ${p.direction ? `<span class="page-card-dir">${p.direction}</span>` : ''}
         <div class="page-card-title">${escapeHtml(p.title)}</div>
         <div class="page-card-desc">${escapeHtml(p.description)}</div>
       </a>`
@@ -521,8 +532,10 @@ async function renderPage(title: string): Promise<void> {
       ${refDuplicateBanner}
       <div id="editor"></div>
       <section class="linked">
-        <h3 id="linked-heading">逆リンク</h3>
+        <h3 id="linked-heading">リンク</h3>
         <div id="backlinks">読み込み中...</div>
+        <h3 id="linked-2hop-heading">2ホップリンク</h3>
+        <div id="backlinks-2hop">読み込み中...</div>
       </section>
     </div>`;
   wireQuickOpen();
@@ -612,23 +625,95 @@ async function renderPage(title: string): Promise<void> {
     },
   });
 
-  await renderBacklinks(title);
+  await renderLinkedPages(title);
 }
 
-async function renderBacklinks(title: string): Promise<void> {
-  const listEl = document.getElementById('backlinks') as HTMLElement;
-  const headingEl = document.getElementById('linked-heading') as HTMLElement;
-  const all = await store.listPages();
-  const hits: { title: string; description: string }[] = [];
-  for (const { title: t } of all) {
-    if (t === title) continue;
+// A page's linked-pages graph node: which other (known, existing) pages it
+// links to (out) and which link to it (in) -- built once per render and
+// shared by the 1-hop and 2-hop computation below, rather than rescanning
+// per candidate page.
+interface LinkNode {
+  title: string;
+  description: string;
+  out: Set<string>;
+  in: Set<string>;
+}
+
+async function buildNoteLinkGraph(): Promise<Map<string, LinkNode>> {
+  const summaries = await store.listPages();
+  const known = new Set(summaries.map((s) => s.title.toLowerCase()));
+  const graph = new Map<string, LinkNode>();
+  for (const { title: t } of summaries) {
     const p = await store.getPage(t);
     if (!p) continue;
-    const linked = p.lines.some((line) => extractLinks(line).includes(title));
-    if (linked) hits.push({ title: t, description: pageDescription(p.lines) });
+    const selfKey = t.toLowerCase();
+    const out = new Set<string>();
+    for (const link of extractLinks(p.lines.join('\n'))) {
+      const key = link.toLowerCase();
+      if (key !== selfKey && known.has(key)) out.add(key);
+    }
+    graph.set(selfKey, { title: t, description: pageDescription(p.lines), out, in: new Set() });
   }
-  headingEl.textContent = `逆リンク (${hits.length})`;
-  listEl.innerHTML = pageCardsHtml(hits, '#/page/', 'なし');
+  for (const node of graph.values()) {
+    for (const o of node.out) graph.get(o)?.in.add(node.title.toLowerCase());
+  }
+  return graph;
+}
+
+// Scrapbox's own "1 hop / 2 hop links": every page directly linked to or
+// from the current one (direction not distinguished in real Scrapbox --
+// tycoon adds the →/←/⇔ badge on top, see pageCardsHtml), plus every page
+// *those* pages link to or from, minus the current page and anything
+// already in the 1-hop set.
+function relatedFromGraph(
+  graph: Map<string, LinkNode>,
+  title: string
+): {
+  hop1: { title: string; description: string; direction: string }[];
+  hop2: { title: string; description: string }[];
+} {
+  const key = title.toLowerCase();
+  const self = graph.get(key);
+  const myOut = self?.out ?? new Set<string>();
+  const myIn = self?.in ?? new Set<string>();
+  const hop1Keys = new Set([...myOut, ...myIn]);
+  hop1Keys.delete(key);
+
+  const hop1 = [...hop1Keys].map((k) => {
+    const node = graph.get(k)!;
+    const fwd = myOut.has(k);
+    const back = myIn.has(k);
+    return { title: node.title, description: node.description, direction: fwd && back ? '⇔' : fwd ? '→' : '←' };
+  });
+
+  const hop2Keys = new Set<string>();
+  for (const k of hop1Keys) {
+    const node = graph.get(k);
+    if (!node) continue;
+    for (const n of node.out) if (n !== key && !hop1Keys.has(n)) hop2Keys.add(n);
+    for (const n of node.in) if (n !== key && !hop1Keys.has(n)) hop2Keys.add(n);
+  }
+  const hop2 = [...hop2Keys].map((k) => {
+    const node = graph.get(k)!;
+    return { title: node.title, description: node.description };
+  });
+
+  return { hop1, hop2 };
+}
+
+async function renderLinkedPages(title: string): Promise<void> {
+  const listEl = document.getElementById('backlinks') as HTMLElement;
+  const headingEl = document.getElementById('linked-heading') as HTMLElement;
+  const hop2ListEl = document.getElementById('backlinks-2hop') as HTMLElement;
+  const hop2HeadingEl = document.getElementById('linked-2hop-heading') as HTMLElement;
+
+  const graph = await buildNoteLinkGraph();
+  const { hop1, hop2 } = relatedFromGraph(graph, title);
+
+  headingEl.textContent = `リンク (${hop1.length})`;
+  listEl.innerHTML = pageCardsHtml(hop1, '#/page/', 'なし');
+  hop2HeadingEl.textContent = `2ホップリンク (${hop2.length})`;
+  hop2ListEl.innerHTML = pageCardsHtml(hop2, '#/page/', 'なし');
 }
 
 const REFERENCE_LIST_LIMIT = 200;
@@ -703,8 +788,10 @@ async function renderReferencePage(title: string): Promise<void> {
       ${referenceBanner(meta)}
       <div id="ref-view"></div>
       <section class="linked">
-        <h3 id="ref-linked-heading">逆リンク</h3>
+        <h3 id="ref-linked-heading">リンク</h3>
         <div id="ref-backlinks">読み込み中...</div>
+        <h3 id="ref-linked-2hop-heading">2ホップリンク</h3>
+        <div id="ref-backlinks-2hop">読み込み中...</div>
       </section>
     </div>`;
   wireQuickOpen();
@@ -713,11 +800,15 @@ async function renderReferencePage(title: string): Promise<void> {
   const knownTitles = await getReferenceTitles();
   renderLinesInto(viewEl, page.lines, { linkBase: '#/ref/', knownTitles });
 
-  const hits = await getReferenceBacklinks(title);
+  const { hop1, hop2 } = await getReferenceRelatedPages(title);
   const headingEl = document.getElementById('ref-linked-heading') as HTMLElement;
   const listEl = document.getElementById('ref-backlinks') as HTMLElement;
-  headingEl.textContent = `逆リンク (${hits.length})`;
-  listEl.innerHTML = pageCardsHtml(hits, '#/ref/', 'なし');
+  const hop2HeadingEl = document.getElementById('ref-linked-2hop-heading') as HTMLElement;
+  const hop2ListEl = document.getElementById('ref-backlinks-2hop') as HTMLElement;
+  headingEl.textContent = `リンク (${hop1.length})`;
+  listEl.innerHTML = pageCardsHtml(hop1, '#/ref/', 'なし');
+  hop2HeadingEl.textContent = `2ホップリンク (${hop2.length})`;
+  hop2ListEl.innerHTML = pageCardsHtml(hop2, '#/ref/', 'なし');
 }
 
 async function renderSettings(): Promise<void> {

@@ -285,15 +285,65 @@ export async function searchPages(
   return { summaries: hits.slice(0, limit).map(toSummary), total: hits.length };
 }
 
-export async function getBacklinks(
+// Scrapbox's own "1 hop / 2 hop links": every page directly linked to or
+// from `title` (tycoon adds the →/←/⇔ direction badge on top -- real
+// Scrapbox doesn't distinguish it), plus every page *those* pages link to
+// or from, minus `title` itself and anything already in the 1-hop set. One
+// scanAll() pass builds the whole link graph; cheap enough in practice even
+// at real-Scrapbox-project scale (see reference-store.ts's header comment
+// on scanAll's own cost) since it's the same single pass getBacklinks was
+// already doing, just also recording each page's outgoing links.
+export async function getRelatedPages(
   title: string,
   extractLinks: (line: string) => string[]
-): Promise<{ title: string; description: string }[]> {
+): Promise<{
+  hop1: { title: string; description: string; direction: string }[];
+  hop2: { title: string; description: string }[];
+}> {
   const all = await scanAll();
-  const hits: { title: string; description: string }[] = [];
+  const byKey = new Map(all.map((p) => [p.title.toLowerCase(), p]));
+  const out = new Map<string, Set<string>>();
+  const inn = new Map<string, Set<string>>();
   for (const p of all) {
-    if (p.title === title) continue;
-    if (p.lines.some((line) => extractLinks(line).includes(title))) hits.push({ title: p.title, description: pageDescription(p.lines) });
+    const selfKey = p.title.toLowerCase();
+    const outs = new Set<string>();
+    for (const line of p.lines) {
+      for (const link of extractLinks(line)) {
+        const key = link.toLowerCase();
+        if (key !== selfKey && byKey.has(key)) outs.add(key);
+      }
+    }
+    out.set(selfKey, outs);
   }
-  return hits;
+  for (const [k, outs] of out) {
+    for (const o of outs) {
+      if (!inn.has(o)) inn.set(o, new Set());
+      inn.get(o)!.add(k);
+    }
+  }
+
+  const key = title.toLowerCase();
+  const myOut = out.get(key) ?? new Set<string>();
+  const myIn = inn.get(key) ?? new Set<string>();
+  const hop1Keys = new Set([...myOut, ...myIn]);
+  hop1Keys.delete(key);
+
+  const hop1 = [...hop1Keys].map((k) => {
+    const p = byKey.get(k)!;
+    const fwd = myOut.has(k);
+    const back = myIn.has(k);
+    return { title: p.title, description: pageDescription(p.lines), direction: fwd && back ? '⇔' : fwd ? '→' : '←' };
+  });
+
+  const hop2Keys = new Set<string>();
+  for (const k of hop1Keys) {
+    for (const n of out.get(k) ?? []) if (n !== key && !hop1Keys.has(n)) hop2Keys.add(n);
+    for (const n of inn.get(k) ?? []) if (n !== key && !hop1Keys.has(n)) hop2Keys.add(n);
+  }
+  const hop2 = [...hop2Keys].map((k) => {
+    const p = byKey.get(k)!;
+    return { title: p.title, description: pageDescription(p.lines) };
+  });
+
+  return { hop1, hop2 };
 }
