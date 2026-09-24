@@ -399,6 +399,14 @@ blockquote.sb-quote {
 /* [< xxx] -> keycap-style */
 .deco-\< {
   display: inline-block;
+  /* .line-view uses white-space: pre-wrap so Scrapbox's literal spacing is
+     preserved; an inline-block *inside* a pre-wrap container is a known
+     bad combination in WebKit/Safari (the inline-block's own box can
+     collapse to near-zero width, shoving its content out from where it
+     should render). The badge's own text never needs pre-wrap's space/
+     newline preservation, so resetting it here to plain wrapping sidesteps
+     the bug without giving up the keycap box styling. */
+  white-space: normal;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.85em;
   line-height: 1.3;
@@ -414,6 +422,7 @@ blockquote.sb-quote {
 /* [> xxx] -> menu-path style */
 .deco-\> {
   display: inline-block;
+  white-space: normal; /* see .deco-\< above */
   font-size: 0.85em;
   line-height: 1.3;
   padding: 2px 6px;
@@ -432,6 +441,7 @@ blockquote.sb-quote {
 /* [! xxx] -> timestamp badge */
 .deco-\! {
   display: inline-block;
+  white-space: normal; /* see .deco-\< above */
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.85em;
   padding: 2px 6px;
