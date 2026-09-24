@@ -11,7 +11,7 @@
 // that for free; outline-editing features (indent, move line) are also
 // easier to add here later, as plain textarea-line manipulation, than they
 // were juggling many separate elements.
-import { renderLinesInto, type RenderOpts } from './parser.js';
+import { renderLinesInto, splitIndent, type RenderOpts } from './parser.js';
 
 // Cross-browser "what text position is under this point" lookup (Blink/
 // WebKit vs Firefox spell it differently); returns the DOM node + offset
@@ -227,6 +227,11 @@ export class Editor {
           e.preventDefault();
           this.indentLines(e.key === 'ArrowRight' ? 1 : -1);
         }
+        return;
+      }
+      if (e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        this.moveOutline(e.key === 'ArrowUp' ? -1 : 1);
       }
     });
 
@@ -479,6 +484,77 @@ export class Editor {
     const newEndCol = Math.max(0, endPos.col + (colDelta.get(endPos.line) ?? 0));
     const newStart = offsetOfLineCol(lines, startPos.line, newStartCol);
     const newEnd = offsetOfLineCol(lines, endPos.line, newEndCol);
+    ta.setSelectionRange(newStart, newEnd);
+  }
+
+  // --- alt+arrow: move the current outline node (line + its nested
+  // children) past its previous/next sibling, also as a whole ---
+
+  // Index of the last line of `start`'s own subtree: every line
+  // immediately after it that's indented deeper than `rootDepth`.
+  private subtreeEnd(lines: string[], start: number, rootDepth: number): number {
+    let end = start;
+    while (end + 1 < lines.length && splitIndent(lines[end + 1] ?? '').depth > rootDepth) end++;
+    return end;
+  }
+
+  // The start line of the sibling subtree immediately above `from` at
+  // `rootDepth` -- i.e. skip back over that sibling's own (deeper) children
+  // until a line at exactly `rootDepth` is found. null if the line above is
+  // shallower (that's the parent, not a sibling) or `from` is already the
+  // first line.
+  private prevSiblingStart(lines: string[], from: number, rootDepth: number): number | null {
+    let i = from - 1;
+    while (i >= 0 && splitIndent(lines[i] ?? '').depth > rootDepth) i--;
+    return i >= 0 && splitIndent(lines[i] ?? '').depth === rootDepth ? i : null;
+  }
+
+  // [start, end] of the sibling subtree immediately after `to` at
+  // `rootDepth`. null if there's nothing there or it's shallower (end of
+  // the parent's children, not a sibling).
+  private nextSiblingRange(lines: string[], to: number, rootDepth: number): [number, number] | null {
+    const start = to + 1;
+    if (start >= lines.length || splitIndent(lines[start] ?? '').depth !== rootDepth) return null;
+    return [start, this.subtreeEnd(lines, start, rootDepth)];
+  }
+
+  private moveOutline(direction: -1 | 1): void {
+    const ta = this.textarea;
+    if (!ta) return;
+    const lines = ta.value.split('\n');
+    const startPos = lineColOf(ta.value, ta.selectionStart);
+    const endPos = lineColOf(ta.value, ta.selectionEnd);
+    const { from, to: selectedTo } = this.selectedLineRange(ta);
+    // The block being moved is rooted at `from`'s own depth -- every
+    // selected sibling at that depth, each dragged along with its own
+    // children, so a subtree never gets orphaned behind or split apart.
+    const rootDepth = splitIndent(lines[from] ?? '').depth;
+    const to = this.subtreeEnd(lines, selectedTo, rootDepth);
+
+    let newLines: string[];
+    let lineShift: number;
+    if (direction === -1) {
+      const prevStart = this.prevSiblingStart(lines, from, rootDepth);
+      if (prevStart === null) return; // no previous sibling at this level -- nothing to swap with
+      const prevBlock = lines.slice(prevStart, from);
+      const currentBlock = lines.slice(from, to + 1);
+      newLines = [...lines.slice(0, prevStart), ...currentBlock, ...prevBlock, ...lines.slice(to + 1)];
+      lineShift = -prevBlock.length;
+    } else {
+      const nextRange = this.nextSiblingRange(lines, to, rootDepth);
+      if (nextRange === null) return; // no next sibling at this level
+      const [nextStart, nextEnd] = nextRange;
+      const currentBlock = lines.slice(from, to + 1);
+      const nextBlock = lines.slice(nextStart, nextEnd + 1);
+      newLines = [...lines.slice(0, from), ...nextBlock, ...currentBlock, ...lines.slice(nextEnd + 1)];
+      lineShift = nextBlock.length;
+    }
+
+    ta.value = newLines.join('\n');
+    ta.dispatchEvent(new Event('input'));
+    ta.focus();
+    const newStart = offsetOfLineCol(newLines, startPos.line + lineShift, startPos.col);
+    const newEnd = offsetOfLineCol(newLines, endPos.line + lineShift, endPos.col);
     ta.setSelectionRange(newStart, newEnd);
   }
 }
