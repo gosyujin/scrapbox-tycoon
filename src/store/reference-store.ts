@@ -5,6 +5,8 @@
 // never edited or pushed anywhere, only viewed. IndexedDB instead of
 // localStorage because a long-running real Scrapbox project's export can
 // run tens of MB, well past localStorage's practical ~5-10MB limit.
+import { matchQuery } from '../search.js';
+
 const DB_NAME = 'scrapbox_tycoon_reference_v1';
 const PAGES_STORE = 'pages';
 const META_STORE = 'meta';
@@ -257,10 +259,9 @@ export async function searchPages(
   sort: SortKey = 'modified',
   getVisitedAt: (title: string) => number = () => 0
 ): Promise<{ summaries: ReferenceSummary[]; total: number }> {
-  const q = query.trim().toLowerCase();
-  if (!q) return listPages(limit, sort, getVisitedAt);
+  if (!query.trim()) return listPages(limit, sort, getVisitedAt);
   const all = await scanAll();
-  const hits = all.filter((p) => (p.title + '\n' + p.lines.join('\n')).toLowerCase().includes(q));
+  const hits = all.filter((p) => matchQuery(p.title + '\n' + p.lines.join('\n'), query));
   hits.sort(compareBy(sort, getVisitedAt));
   return { summaries: hits.slice(0, limit).map(toSummary), total: hits.length };
 }

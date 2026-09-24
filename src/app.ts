@@ -16,6 +16,7 @@ import {
   type SortKey as ReferenceSortKey,
 } from './store/reference-store.js';
 import { makeVisitTracker } from './visit-tracking.js';
+import { matchQuery } from './search.js';
 import type { Page, Store, SyncCapable, SyncStatus } from './types.js';
 
 function getReferenceBacklinks(title: string): Promise<string[]> {
@@ -323,16 +324,12 @@ interface NoteRow {
 }
 
 async function loadNoteRows(query: string): Promise<NoteRow[]> {
-  const q = query.trim().toLowerCase();
   const summaries = await store.listPages();
   const rows: NoteRow[] = [];
   for (const s of summaries) {
     const full = await store.getPage(s.title);
     if (!full) continue;
-    if (q) {
-      const matches = full.title.toLowerCase().includes(q) || full.lines.some((l) => l.toLowerCase().includes(q));
-      if (!matches) continue;
-    }
+    if (!matchQuery(full.lines.join('\n'), query)) continue;
     rows.push({ title: full.title, created: full.created, updated: full.updated });
   }
   return rows;
