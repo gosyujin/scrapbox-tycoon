@@ -214,24 +214,11 @@ body {
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
-.home-ref-section h2 {
-  font-size: 16px;
-  margin: 0 0 8px;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.muted-link {
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--muted);
-  white-space: nowrap;
-}
 
 .sort-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin: 8px 0;
   font-size: 12px;
@@ -629,21 +616,13 @@ blockquote.sb-quote {
   right: 10px;
   bottom: 10px;
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-  pointer-events: none;
-}
-
-.status-bar-row {
-  display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
+  pointer-events: none;
 }
 
 .sync-status {
-  align-self: flex-start;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -662,6 +641,8 @@ blockquote.sb-quote {
   color: var(--muted);
 }
 
+/* Reused in-flow at the top of the notes/reference lists too, not just
+   the fixed footer -- see renderPageList()/renderReferenceList(). */
 .backend-badge {
   background: var(--accent);
   padding: 3px 8px;

@@ -113,7 +113,6 @@ function makeStore(): Store {
 let store: Store = makeStore();
 
 const app = document.getElementById('app') as HTMLElement;
-const backendBadge = document.getElementById('backend-badge') as HTMLElement;
 const syncStatusEl = document.getElementById('sync-status') as HTMLElement;
 
 function describeSyncStatus(s: SyncStatus): string {
@@ -123,13 +122,19 @@ function describeSyncStatus(s: SyncStatus): string {
   return '同期済み';
 }
 
+// Text for the badge shown inline at the top of the notes list (see
+// renderPageList) -- unlike sync status, this only ever changes via the
+// settings page's own save-and-navigate-away flow, so it's read fresh into
+// each render rather than kept updated in place like syncStatusEl below.
+function backendBadgeLabel(): string {
+  return isSyncCapable(store) ? `${settings.owner}/${settings.repo}@${settings.branch}` : 'Local (this browser only)';
+}
+
 function updateBadge(): void {
   if (isSyncCapable(store)) {
-    backendBadge.textContent = `GitHub: ${settings.owner}/${settings.repo}@${settings.branch}`;
     syncStatusEl.textContent = describeSyncStatus(store.getSyncStatus());
     syncStatusEl.style.display = '';
   } else {
-    backendBadge.textContent = 'Local (this browser only)';
     syncStatusEl.textContent = '';
     syncStatusEl.style.display = 'none';
   }
@@ -216,8 +221,8 @@ function topBar(): string {
         <input id="quick-open" class="quick-open" placeholder="開く/作成 (Enter) ・ 一覧では検索にも使えます" />
       </div>
       <nav>
-        <button id="random-btn" class="nav-btn" type="button">ランダム</button>
-        <a href="#/settings">設定</a>
+        <button id="random-btn" class="nav-btn" type="button" title="ランダム" aria-label="ランダム">🔀</button>
+        <a href="#/settings" title="設定" aria-label="設定">⚙️</a>
       </nav>
     </div>`;
 }
@@ -431,9 +436,9 @@ async function renderPageList(query = ''): Promise<void> {
       total > summaries.length ? `<p>先頭${summaries.length}件のみ表示中（全${total}件）。<a href="#/ref">参照一覧</a>で続きを検索できます。</p>` : '';
     refSection = `
       <section class="home-ref-section">
-        <h2>参照プロジェクト (${total}) <a class="muted-link" href="#/ref">全件を見る →</a></h2>
         <div class="sort-bar">
-          <label for="home-ref-sort">並び替え</label>
+          <span>${escapeHtml(refMeta.projectName)}</span>
+          <span>${total} pages</span>
           ${sortSelectHtml('home-ref-sort', REF_SORT_LABELS, refSort)}
         </div>
         ${pageCardsHtml(summaries, '#/ref/', '一致するページがありません。')}
@@ -444,9 +449,9 @@ async function renderPageList(query = ''): Promise<void> {
   app.innerHTML = `
     ${topBar()}
     <div class="content">
-      <h1>ページ一覧 (${rows.length})</h1>
       <div class="sort-bar">
-        <label for="home-note-sort">並び替え</label>
+        <span id="backend-badge" class="backend-badge">${escapeHtml(backendBadgeLabel())}</span>
+        <span>${rows.length} pages</span>
         ${sortSelectHtml('home-note-sort', NOTE_SORT_LABELS, homeNoteSort)}
       </div>
       ${pageCardsHtml(rows, '#/page/', query ? '一致するページがありません。' : 'まだページがありません。上の入力欄から作成してください。')}
@@ -659,9 +664,9 @@ async function renderReferenceList(): Promise<void> {
     ${topBar()}
     <div class="content">
       ${referenceBanner(meta)}
-      <h1>参照ページ一覧 (${total})</h1>
       <div class="sort-bar">
-        <label for="ref-list-sort">並び替え</label>
+        <span>${escapeHtml(meta.projectName)}</span>
+        <span>${total} pages</span>
         ${sortSelectHtml('ref-list-sort', REF_SORT_LABELS, refSort)}
       </div>
       ${truncatedNote}
@@ -892,9 +897,9 @@ async function loadBuildInfo(): Promise<void> {
     if (!res.ok) throw new Error(String(res.status));
     const info: BuildInfo = await res.json();
     const built = new Date(info.builtAt).toLocaleString();
-    el.textContent = `build: ${info.shortSha} (${built})`;
+    el.textContent = `${info.shortSha} (${built})`;
   } catch {
-    el.textContent = 'build: (dev / unknown)';
+    el.textContent = '(dev / unknown)';
   }
 }
 
