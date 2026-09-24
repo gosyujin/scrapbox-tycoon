@@ -396,24 +396,23 @@ blockquote.sb-quote {
    scrapbox-pwa-viewer, itself carried over from the source Scrapbox
    project's settings-page custom CSS) ---------- */
 
-/* Shared by every "badge" decoration below (.deco-\< / \> / \!). Two fix
-   attempts at pinning an inline-block's width down (white-space: pre-wrap
-   reset, then word-break/width overrides) both failed on the actual
-   device where this was reported broken -- display: inline-block's own
-   shrink-to-fit sizing is the thing that keeps going wrong under Safari
-   with word-break: break-word up the tree (see .line-view), no matter
-   which of its inputs gets overridden. inline-flex uses a completely
-   different sizing algorithm (flex layout, not shrink-to-fit text flow),
-   so it doesn't share that specific bug -- align-items/justify-content
-   center the label the way padding+vertical-align approximated before. */
+/* Shared by every "badge" decoration below (.deco-\< / \> / \!). Three fix
+   attempts at giving this an independent box (inline-block with various
+   width/word-break overrides, then inline-flex) all still collapsed on
+   the actual device where this was reported broken -- confirmed visually
+   fine there with plain display: inline instead, so that's what this is
+   now. inline never creates its own shrink-to-fit/flex sizing context in
+   the first place, which is what every earlier attempt was fighting under
+   Safari with word-break: break-word up the tree (see .line-view). The
+   trade-off is losing vertical-align/align-items centering control, not
+   needed here since the padding is modest and the label is always a
+   single short word/phrase; white-space: nowrap keeps that phrase from
+   ever being split mid-badge by a line wrap. */
 .deco-\<,
 .deco-\>,
 .deco-\! {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: inline;
   white-space: nowrap;
-  vertical-align: middle;
   font-size: 0.85em;
   line-height: 1.3;
   padding: 0.15em 0.5em;
