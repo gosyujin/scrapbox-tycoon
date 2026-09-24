@@ -168,12 +168,13 @@ export interface ReferenceSummary {
 }
 
 // The card preview text: everything but the title line, blank lines
-// dropped, joined into one run -- CSS clips it to however much fits.
+// dropped but real line breaks between the rest kept (see .page-card-desc's
+// white-space: pre-line) -- CSS clips it to however much fits.
 function pageDescription(lines: string[]): string {
   return lines
     .slice(1)
     .filter((l) => l.trim() !== '')
-    .join(' ')
+    .join('\n')
     .slice(0, 300);
 }
 
@@ -284,12 +285,15 @@ export async function searchPages(
   return { summaries: hits.slice(0, limit).map(toSummary), total: hits.length };
 }
 
-export async function getBacklinks(title: string, extractLinks: (line: string) => string[]): Promise<string[]> {
+export async function getBacklinks(
+  title: string,
+  extractLinks: (line: string) => string[]
+): Promise<{ title: string; description: string }[]> {
   const all = await scanAll();
-  const hits: string[] = [];
+  const hits: { title: string; description: string }[] = [];
   for (const p of all) {
     if (p.title === title) continue;
-    if (p.lines.some((line) => extractLinks(line).includes(title))) hits.push(p.title);
+    if (p.lines.some((line) => extractLinks(line).includes(title))) hits.push({ title: p.title, description: pageDescription(p.lines) });
   }
   return hits;
 }

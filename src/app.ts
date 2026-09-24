@@ -19,7 +19,7 @@ import { makeVisitTracker } from './visit-tracking.js';
 import { matchQuery } from './search.js';
 import type { Page, Store, SyncCapable, SyncStatus } from './types.js';
 
-function getReferenceBacklinks(title: string): Promise<string[]> {
+function getReferenceBacklinks(title: string): Promise<{ title: string; description: string }[]> {
   return getReferenceBacklinksRaw(title, extractLinks);
 }
 
@@ -325,14 +325,15 @@ interface NoteRow {
 }
 
 // The card preview text: everything but the title line (lines[0]), blank
-// lines dropped, joined into one run -- CSS does the actual clipping to
-// however much fits in a card, this just avoids handing it megabytes of
-// full page text to lay out and then throw away.
+// lines dropped but real line breaks between the rest kept (.page-card-desc
+// is white-space: pre-line) -- CSS does the actual clipping to however much
+// fits in a card, this just avoids handing it megabytes of full page text
+// to lay out and then throw away.
 function pageDescription(lines: string[]): string {
   return lines
     .slice(1)
     .filter((l) => l.trim() !== '')
-    .join(' ')
+    .join('\n')
     .slice(0, 300);
 }
 
@@ -504,7 +505,7 @@ async function renderPage(title: string): Promise<void> {
       <div id="editor"></div>
       <section class="linked">
         <h3 id="linked-heading">逆リンク</h3>
-        <ul id="backlinks" class="muted">読み込み中...</ul>
+        <div id="backlinks">読み込み中...</div>
       </section>
     </div>`;
   wireQuickOpen();
@@ -600,19 +601,16 @@ async function renderBacklinks(title: string): Promise<void> {
   const listEl = document.getElementById('backlinks') as HTMLElement;
   const headingEl = document.getElementById('linked-heading') as HTMLElement;
   const all = await store.listPages();
-  const hits: string[] = [];
+  const hits: { title: string; description: string }[] = [];
   for (const { title: t } of all) {
     if (t === title) continue;
     const p = await store.getPage(t);
     if (!p) continue;
     const linked = p.lines.some((line) => extractLinks(line).includes(title));
-    if (linked) hits.push(t);
+    if (linked) hits.push({ title: t, description: pageDescription(p.lines) });
   }
   headingEl.textContent = `逆リンク (${hits.length})`;
-  listEl.className = '';
-  listEl.innerHTML =
-    hits.map((t) => `<li><a href="#/page/${encodeURIComponent(t)}">${escapeHtml(t)}</a></li>`).join('') ||
-    '<li class="muted">なし</li>';
+  listEl.innerHTML = pageCardsHtml(hits, '#/page/', 'なし');
 }
 
 const REFERENCE_LIST_LIMIT = 200;
@@ -688,7 +686,7 @@ async function renderReferencePage(title: string): Promise<void> {
       <div id="ref-view"></div>
       <section class="linked">
         <h3 id="ref-linked-heading">逆リンク</h3>
-        <ul id="ref-backlinks" class="muted">読み込み中...</ul>
+        <div id="ref-backlinks">読み込み中...</div>
       </section>
     </div>`;
   wireQuickOpen();
@@ -701,10 +699,7 @@ async function renderReferencePage(title: string): Promise<void> {
   const headingEl = document.getElementById('ref-linked-heading') as HTMLElement;
   const listEl = document.getElementById('ref-backlinks') as HTMLElement;
   headingEl.textContent = `逆リンク (${hits.length})`;
-  listEl.className = '';
-  listEl.innerHTML =
-    hits.map((t) => `<li><a href="#/ref/${encodeURIComponent(t)}">${escapeHtml(t)}</a></li>`).join('') ||
-    '<li class="muted">なし</li>';
+  listEl.innerHTML = pageCardsHtml(hits, '#/ref/', 'なし');
 }
 
 async function renderSettings(): Promise<void> {
