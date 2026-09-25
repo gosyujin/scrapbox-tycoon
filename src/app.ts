@@ -601,12 +601,6 @@ function compareNoteRows(sort: NoteSortKey, linkCounts: Map<string, number> | nu
 }
 
 async function renderPageList(query = ''): Promise<void> {
-  // Only a debounced re-render triggered by typing in #quick-open should
-  // restore focus/caret afterward -- app.innerHTML below destroys the old
-  // input, so this has to be captured before that happens. A plain
-  // navigation to #/ should not steal focus and pop the keyboard.
-  const hadFocus = (document.activeElement as HTMLElement | null)?.id === 'quick-open';
-
   let rows = await loadNoteRows(query);
   const linkCounts = homeNoteSort === 'linked' ? await computeNoteLinkCounts() : null;
   rows = rows.slice().sort(compareNoteRows(homeNoteSort, linkCounts));
@@ -631,6 +625,18 @@ async function renderPageList(query = ''): Promise<void> {
       </section>`;
   }
 
+  // Read the box's actual live state as late as possible, right before
+  // it gets destroyed below -- the awaits above can take a real moment
+  // (a full reference-project scan on a slow phone), and the user may
+  // well have kept typing during that gap. Restoring `query` itself (the
+  // value this render was originally scheduled for) would silently
+  // overwrite whatever they typed since with an older, shorter string --
+  // it looked like characters were getting eaten while typing quickly.
+  const liveInput = document.getElementById('quick-open') as HTMLInputElement | null;
+  const hadFocus = document.activeElement === liveInput;
+  const liveValue = liveInput ? liveInput.value : query;
+  const liveCaret = liveInput?.selectionStart ?? liveValue.length;
+
   app.innerHTML = `
     ${topBar(!!refMeta)}
     <div class="content">
@@ -647,10 +653,10 @@ async function renderPageList(query = ''): Promise<void> {
   // input already at its post-render value/focus state and can re-open
   // the dropdown immediately instead of waiting for another keystroke.
   const input = document.getElementById('quick-open') as HTMLInputElement;
-  input.value = query;
+  input.value = liveValue;
   if (hadFocus) {
     input.focus();
-    input.setSelectionRange(query.length, query.length);
+    input.setSelectionRange(liveCaret, liveCaret);
   }
   wireQuickOpen();
   wireDebouncedSearch(input, (nextQuery) => void renderPageList(nextQuery));
