@@ -54,6 +54,39 @@ function writeMeta(meta: SyncMeta): void {
   localStorage.setItem(SYNC_META_KEY, JSON.stringify(meta));
 }
 
+// A running history of setStatus() transitions -- localStorage-backed
+// (not just an in-memory array on the instance) so it survives a reload
+// and outlives the GitHubSyncStore instance that wrote it, since the
+// whole point is catching something like "sync said 同期中 and never
+// moved" after the fact, when reproducing it live on demand isn't
+// practical. Capped so an old, long-forgotten stall doesn't grow this
+// forever.
+const SYNC_LOG_KEY = 'scrapbox_tycoon_sync_log_v1';
+const SYNC_LOG_MAX_ENTRIES = 300;
+
+interface SyncLogEntry {
+  t: number; // Date.now(), not the page's own unix-seconds convention -- this needs to diff against wall-clock time for "stuck for how long".
+  state: SyncStatus['state'];
+  dirtyCount: number;
+  lastError: string | null;
+}
+
+function readSyncLog(): SyncLogEntry[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SYNC_LOG_KEY) || '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function appendSyncLog(entry: SyncLogEntry): void {
+  const log = readSyncLog();
+  log.push(entry);
+  if (log.length > SYNC_LOG_MAX_ENTRIES) log.splice(0, log.length - SYNC_LOG_MAX_ENTRIES);
+  localStorage.setItem(SYNC_LOG_KEY, JSON.stringify(log));
+}
+
 export class GitHubSyncStore implements Store, SyncCapable {
   private local = new LocalStore();
   private remote: GitHubStore;
@@ -187,7 +220,25 @@ export class GitHubSyncStore implements Store, SyncCapable {
 
   private setStatus(patch: Partial<SyncStatus>): void {
     this.status = { ...this.status, ...patch };
+    appendSyncLog({
+      t: Date.now(),
+      state: this.status.state,
+      dirtyCount: this.status.dirtyCount,
+      lastError: this.status.lastError,
+    });
     for (const listener of this.listeners) listener(this.status);
+  }
+
+  getStatusLogText(): string {
+    const log = readSyncLog();
+    if (log.length === 0) return '(記録なし)';
+    return log
+      .map((e) => {
+        const time = new Date(e.t).toLocaleString();
+        const err = e.lastError ? ` error=${e.lastError}` : '';
+        return `${time}  state=${e.state} dirty=${e.dirtyCount}${err}`;
+      })
+      .join('\n');
   }
 
   private async runSync(): Promise<void> {

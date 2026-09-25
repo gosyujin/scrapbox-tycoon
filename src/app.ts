@@ -1006,7 +1006,9 @@ async function renderSettings(): Promise<void> {
     ? `<p class="muted" id="sync-status-line">${escapeHtml(describeSyncStatus(store.getSyncStatus()))}</p>
        <button id="sync-now">今すぐ同期</button>
        <button id="cleanup-orphans-btn" class="secondary">同期先の孤立ページを確認して削除</button>
-       <p id="cleanup-status" class="muted"></p>`
+       <p id="cleanup-status" class="muted"></p>
+       <button id="copy-sync-log-btn" class="secondary">同期ログをコピー（デバッグ用）</button>
+       <p id="copy-sync-log-status" class="muted"></p>`
     : '';
 
   const refMeta = await getReferenceMeta();
@@ -1085,6 +1087,16 @@ async function renderSettings(): Promise<void> {
         status.textContent = `${orphans.length} 件のページを同期先から削除しました。`;
       } catch (err) {
         status.textContent = `失敗: ${(err as Error).message}`;
+      }
+    });
+
+    document.getElementById('copy-sync-log-btn')!.addEventListener('click', async () => {
+      const status = document.getElementById('copy-sync-log-status') as HTMLElement;
+      try {
+        await navigator.clipboard.writeText(syncStore.getStatusLogText());
+        status.textContent = 'コピーしました。';
+      } catch (err) {
+        status.textContent = `コピーに失敗しました: ${(err as Error).message}`;
       }
     });
   }

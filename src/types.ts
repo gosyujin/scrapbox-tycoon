@@ -61,4 +61,9 @@ export interface SyncCapable {
   // passed in, so the caller can show them for confirmation first.
   listOrphanedRemotePages(): Promise<string[]>;
   deleteOrphanedRemotePages(titles: string[]): Promise<void>;
+  // A persisted (survives reload/instance recreation), capped history of
+  // every sync-status transition -- for pasting into a bug report when
+  // something like "sync got stuck" is hard to catch live (see
+  // github-sync-store.ts's syncLog helpers).
+  getStatusLogText(): string;
 }
