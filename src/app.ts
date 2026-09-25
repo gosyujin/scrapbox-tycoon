@@ -215,7 +215,7 @@ window.addEventListener('hashchange', () => {
   void route();
 });
 
-function topBar(): string {
+function topBar(hasRef: boolean): string {
   return `
     <div class="topbar">
       <a href="#/" class="brand">scrapbox-tycoon</a>
@@ -224,6 +224,7 @@ function topBar(): string {
         <input id="quick-open" class="quick-open" placeholder="開く/作成 (Enter) ・ 一覧では検索にも使えます" />
       </div>
       <nav>
+        ${hasRef ? '<a href="#/ref" title="参照一覧" aria-label="参照一覧">📖</a>' : ''}
         <button id="random-btn" class="nav-btn" type="button" title="ランダム" aria-label="ランダム">🔀</button>
         <a href="#/settings" title="設定" aria-label="設定">⚙️</a>
       </nav>
@@ -313,8 +314,6 @@ function wireDebouncedSearch(input: HTMLInputElement, onSearch: (query: string) 
     schedule();
   });
 }
-
-const HOME_REF_LIMIT = 30;
 
 const NOTE_SORT_KEY = 'scrapbox_tycoon_note_sort_v1';
 const REF_SORT_KEY = 'scrapbox_tycoon_ref_sort_v1';
@@ -473,14 +472,14 @@ async function renderPageList(query = ''): Promise<void> {
   rows = rows.slice().sort(compareNoteRows(homeNoteSort, linkCounts));
 
   const refMeta = await getReferenceMeta();
+  let refSummaries: PageCardItem[] = [];
   let refSection = '';
   if (refMeta) {
     const getVisitedAt = (title: string) => refVisits.getStats(title).lastVisited;
     const { summaries, total } = query
-      ? await searchReferencePages(query, HOME_REF_LIMIT, refSort, getVisitedAt)
-      : await listReferencePages(HOME_REF_LIMIT, refSort, getVisitedAt);
-    const moreNote =
-      total > summaries.length ? `<p>先頭${summaries.length}件のみ表示中（全${total}件）。<a href="#/ref">参照一覧</a>で続きを検索できます。</p>` : '';
+      ? await searchReferencePages(query, Infinity, refSort, getVisitedAt)
+      : await listReferencePages(Infinity, refSort, getVisitedAt);
+    refSummaries = summaries;
     refSection = `
       <section class="home-ref-section">
         <div class="sort-bar">
@@ -488,13 +487,12 @@ async function renderPageList(query = ''): Promise<void> {
           <span>${total} pages</span>
           ${sortSelectHtml('home-ref-sort', REF_SORT_LABELS, refSort)}
         </div>
-        ${pageCardsHtml(summaries, '#/ref/', '一致するページがありません。')}
-        ${moreNote}
+        <div id="home-ref-cards"></div>
       </section>`;
   }
 
   app.innerHTML = `
-    ${topBar()}
+    ${topBar(!!refMeta)}
     <div class="content">
       <div class="sort-bar">
         <span id="backend-badge" class="backend-badge">${escapeHtml(backendBadgeLabel())}</span>
@@ -512,6 +510,9 @@ async function renderPageList(query = ''): Promise<void> {
     '#/page/',
     query ? '一致するページがありません。' : 'まだページがありません。上の入力欄から作成してください。'
   );
+  if (refMeta) {
+    mountInfiniteCards(document.getElementById('home-ref-cards')!, refSummaries, '#/ref/', '一致するページがありません。');
+  }
 
   const input = document.getElementById('quick-open') as HTMLInputElement;
   input.value = query;
@@ -568,7 +569,7 @@ async function renderPage(title: string): Promise<void> {
     : '';
 
   app.innerHTML = `
-    ${topBar()}
+    ${topBar(referenceTitles.size > 0)}
     <div class="content page-content">
       ${isNew ? '<p class="muted">新規ページ（最初の行を編集すると保存されます）</p>' : ''}
       ${mergeBanner}
@@ -767,12 +768,12 @@ function referenceBanner(meta: { projectName: string; importedAt: number }): str
 
 // Search lives on the home page now (one box covering notes + reference
 // together) -- this view is just the sorted full list, with its own sort
-// control for browsing beyond the home page's capped preview.
+// control, reachable from the header's 📖 link.
 async function renderReferenceList(): Promise<void> {
   const meta = await getReferenceMeta();
   if (!meta) {
     app.innerHTML = `
-      ${topBar()}
+      ${topBar(false)}
       <div class="content">
         <h1>参照プロジェクト</h1>
         <p class="muted">まだインポートされていません。設定画面からScrapboxのエクスポートJSONを読み込んでください。</p>
@@ -785,7 +786,7 @@ async function renderReferenceList(): Promise<void> {
   const { summaries, total } = await listReferencePages(Infinity, refSort, getVisitedAt);
 
   app.innerHTML = `
-    ${topBar()}
+    ${topBar(true)}
     <div class="content">
       ${referenceBanner(meta)}
       <div class="sort-bar">
@@ -812,7 +813,7 @@ async function renderReferencePage(title: string): Promise<void> {
 
   if (!meta || !page) {
     app.innerHTML = `
-      ${topBar()}
+      ${topBar(!!meta)}
       <div class="content">
         <p class="muted">${meta ? `ページが見つかりません: ${escapeHtml(title)}` : '参照プロジェクトが未インポートです。'}</p>
         <p><a href="#/ref">参照一覧に戻る</a></p>
@@ -823,7 +824,7 @@ async function renderReferencePage(title: string): Promise<void> {
   refVisits.recordVisit(title);
 
   app.innerHTML = `
-    ${topBar()}
+    ${topBar(true)}
     <div class="content page-content">
       ${referenceBanner(meta)}
       <div id="ref-view"></div>
@@ -865,7 +866,7 @@ async function renderSettings(): Promise<void> {
     : '未インポートです';
 
   app.innerHTML = `
-    ${topBar()}
+    ${topBar(!!refMeta)}
     <div class="content settings">
       <h1>設定</h1>
       <label><input type="radio" name="backend" value="local" ${settings.backend === 'local' ? 'checked' : ''}> ローカル（このブラウザのみ・すぐ試せる）</label>
