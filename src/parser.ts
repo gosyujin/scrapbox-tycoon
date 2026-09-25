@@ -88,7 +88,15 @@ function parseBracket(inner: string): InlineToken[] {
     const j = findMatchingBracket(inner, 0);
     if (j === inner.length - 1) {
       const sub = inner.slice(1, -1);
-      return isUrl(sub) ? [urlAloneToken(sub)] : [{ type: 'link', title: sub, strong: true }];
+      if (isUrl(sub)) return [urlAloneToken(sub)];
+      // [[[x]]]: sub is itself a whole bracket pair ("[x]"), one nesting
+      // level deeper than plain [[x]] -- recursing lets this same branch
+      // unwrap that layer too, landing on a strong link titled "x"
+      // instead of a strong link to the literal text "[x]".
+      if (sub.startsWith('[') && sub.endsWith(']') && findMatchingBracket(sub, 0) === sub.length - 1) {
+        return parseBracket(sub);
+      }
+      return [{ type: 'link', title: sub, strong: true }];
     }
   }
 
