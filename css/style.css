@@ -177,6 +177,15 @@ body {
   background: var(--accent);
 }
 
+/* Pushes the icon group to the row's right edge -- on desktop this is
+   already the effective result of quick-open-row's own flex: 1, but on
+   mobile quick-open-row wraps to its own row (below), leaving brand +
+   nav alone on the first row where nav would otherwise sit right next
+   to the brand text instead of at the right edge. */
+.topbar nav {
+  margin-left: auto;
+}
+
 .topbar nav a,
 .topbar nav button.nav-btn {
   margin-left: 12px;
