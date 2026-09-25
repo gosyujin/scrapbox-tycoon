@@ -313,7 +313,7 @@ function renderQuickOpenDropdown(dropdown: HTMLElement, results: QuickOpenResult
   dropdown.hidden = false;
 }
 
-function wireQuickOpen(enableDropdown = true): void {
+function wireQuickOpen(): void {
   const input = document.getElementById('quick-open') as HTMLInputElement;
   const addBtn = document.getElementById('quick-add') as HTMLButtonElement;
   const dropdown = document.getElementById('quick-open-dropdown') as HTMLDivElement;
@@ -337,41 +337,46 @@ function wireQuickOpen(enableDropdown = true): void {
     dropdown.innerHTML = '';
   };
 
-  if (enableDropdown) {
-    wireDebouncedSearch(
-      input,
-      (query) => {
-        void (async () => {
-          results = await searchQuickOpen(query);
-          selectedIndex = 0;
-          // The debounce timer can resolve after the box lost focus (e.g.
-          // Enter already navigated away) -- don't pop a dropdown back up.
-          if (document.activeElement === input) renderQuickOpenDropdown(dropdown, results, selectedIndex);
-        })();
-      },
-      200
-    );
-    input.addEventListener('focus', () => {
-      if (results.length > 0) renderQuickOpenDropdown(dropdown, results, selectedIndex);
-    });
-    // Delayed so a click/tap on a dropdown item -- which blurs the input
-    // first -- still gets to fire its own click and navigate before the
-    // dropdown disappears out from under it.
-    input.addEventListener('blur', () => {
-      setTimeout(closeDropdown, 150);
-    });
-  }
+  // Same dropdown on every page, including the list page -- which also
+  // keeps its own separate debounced search wired below to re-filter the
+  // full card grid. The two don't conflict: this one's shorter delay
+  // (200ms vs. that one's 250ms) means the dropdown lands first as a fast
+  // preview, and the list's own re-render (which rebuilds the header from
+  // scratch) naturally clears it a beat later once the filtered grid is
+  // showing the same results in full.
+  wireDebouncedSearch(
+    input,
+    (query) => {
+      void (async () => {
+        results = await searchQuickOpen(query);
+        selectedIndex = 0;
+        // The debounce timer can resolve after the box lost focus (e.g.
+        // Enter already navigated away) -- don't pop a dropdown back up.
+        if (document.activeElement === input) renderQuickOpenDropdown(dropdown, results, selectedIndex);
+      })();
+    },
+    200
+  );
+  input.addEventListener('focus', () => {
+    if (results.length > 0) renderQuickOpenDropdown(dropdown, results, selectedIndex);
+  });
+  // Delayed so a click/tap on a dropdown item -- which blurs the input
+  // first -- still gets to fire its own click and navigate before the
+  // dropdown disappears out from under it.
+  input.addEventListener('blur', () => {
+    setTimeout(closeDropdown, 150);
+  });
 
   input.addEventListener('keydown', (e) => {
     if (composing || e.isComposing) return;
-    if (enableDropdown && !dropdown.hidden && results.length > 0) {
-      if (e.key === 'ArrowDown') {
+    if (!dropdown.hidden && results.length > 0) {
+      if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
         e.preventDefault();
         selectedIndex = Math.min(selectedIndex + 1, results.length - 1);
         renderQuickOpenDropdown(dropdown, results, selectedIndex);
         return;
       }
-      if (e.key === 'ArrowUp') {
+      if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
         e.preventDefault();
         selectedIndex = Math.max(selectedIndex - 1, 0);
         renderQuickOpenDropdown(dropdown, results, selectedIndex);
@@ -624,10 +629,7 @@ async function renderPageList(query = ''): Promise<void> {
       <div id="note-cards"></div>
       ${refSection}
     </div>`;
-  // The list page already filters its own full card grid live as you
-  // type (see wireDebouncedSearch below) -- the header's dropdown variant
-  // is for everywhere else, where that isn't available.
-  wireQuickOpen(false);
+  wireQuickOpen();
 
   mountInfiniteCards(
     document.getElementById('note-cards')!,
