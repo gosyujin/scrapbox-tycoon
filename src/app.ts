@@ -313,6 +313,15 @@ function renderQuickOpenDropdown(dropdown: HTMLElement, results: QuickOpenResult
   dropdown.hidden = false;
 }
 
+// Module-level, not local to wireQuickOpen(), so it survives the list
+// page's full app.innerHTML rebuild on every filter keystroke -- letting
+// the dropdown repaint synchronously from the previous results the
+// instant the new DOM exists, rather than sitting empty for the async
+// gap until a fresh search resolves (which is what caused the flicker
+// the immediate-runSearch fix on its own didn't fully close).
+let quickOpenResults: QuickOpenResult[] = [];
+let quickOpenSelectedIndex = 0;
+
 function wireQuickOpen(): void {
   const input = document.getElementById('quick-open') as HTMLInputElement;
   const addBtn = document.getElementById('quick-add') as HTMLButtonElement;
@@ -328,11 +337,9 @@ function wireQuickOpen(): void {
     composing = false;
   });
 
-  let results: QuickOpenResult[] = [];
-  let selectedIndex = 0;
   const closeDropdown = () => {
-    results = [];
-    selectedIndex = 0;
+    quickOpenResults = [];
+    quickOpenSelectedIndex = 0;
     dropdown.hidden = true;
     dropdown.innerHTML = '';
   };
@@ -340,24 +347,31 @@ function wireQuickOpen(): void {
   // Same dropdown on every page, including the list page -- which also
   // keeps its own separate debounced search wired below to re-filter the
   // full card grid. That re-render rebuilds the header from scratch on
-  // every keystroke pause, which would otherwise wipe the dropdown right
-  // back to empty each time (a fresh wireQuickOpen() call, no keystroke
-  // to re-trigger it) -- runSearch() also fires once immediately below
-  // if the restored input already has focus and a value, so the dropdown
-  // reappears in the same render instead of needing another keystroke.
+  // every keystroke pause; quickOpenResults being module-level (not reset
+  // here) means the line below repaints synchronously from whatever the
+  // dropdown last showed, so the new DOM never has a moment of sitting
+  // empty while runSearch's own async work catches up a beat later.
   const runSearch = (query: string) => {
     void (async () => {
-      results = await searchQuickOpen(query);
-      selectedIndex = 0;
+      quickOpenResults = await searchQuickOpen(query);
+      quickOpenSelectedIndex = 0;
       // Can resolve after the box lost focus (e.g. Enter already
       // navigated away) -- don't pop a dropdown back up in that case.
-      if (document.activeElement === input) renderQuickOpenDropdown(dropdown, results, selectedIndex);
+      if (document.activeElement === input) renderQuickOpenDropdown(dropdown, quickOpenResults, quickOpenSelectedIndex);
     })();
   };
   wireDebouncedSearch(input, runSearch, 200);
-  if (document.activeElement === input && input.value.trim()) runSearch(input.value);
+  if (document.activeElement === input && input.value.trim()) {
+    if (quickOpenResults.length > 0) renderQuickOpenDropdown(dropdown, quickOpenResults, quickOpenSelectedIndex);
+    runSearch(input.value);
+  }
   input.addEventListener('focus', () => {
-    if (results.length > 0) renderQuickOpenDropdown(dropdown, results, selectedIndex);
+    // quickOpenResults is module-level and can outlive the page that
+    // produced it (e.g. a click on a result just navigated away) -- only
+    // trust it here if the box still holds the query that produced it.
+    if (input.value.trim() && quickOpenResults.length > 0) {
+      renderQuickOpenDropdown(dropdown, quickOpenResults, quickOpenSelectedIndex);
+    }
   });
   // Delayed so a click/tap on a dropdown item -- which blurs the input
   // first -- still gets to fire its own click and navigate before the
@@ -368,17 +382,17 @@ function wireQuickOpen(): void {
 
   input.addEventListener('keydown', (e) => {
     if (composing || e.isComposing) return;
-    if (!dropdown.hidden && results.length > 0) {
+    if (!dropdown.hidden && quickOpenResults.length > 0) {
       if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
         e.preventDefault();
-        selectedIndex = Math.min(selectedIndex + 1, results.length - 1);
-        renderQuickOpenDropdown(dropdown, results, selectedIndex);
+        quickOpenSelectedIndex = Math.min(quickOpenSelectedIndex + 1, quickOpenResults.length - 1);
+        renderQuickOpenDropdown(dropdown, quickOpenResults, quickOpenSelectedIndex);
         return;
       }
       if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
         e.preventDefault();
-        selectedIndex = Math.max(selectedIndex - 1, 0);
-        renderQuickOpenDropdown(dropdown, results, selectedIndex);
+        quickOpenSelectedIndex = Math.max(quickOpenSelectedIndex - 1, 0);
+        renderQuickOpenDropdown(dropdown, quickOpenResults, quickOpenSelectedIndex);
         return;
       }
       if (e.key === 'Escape') {
@@ -386,7 +400,7 @@ function wireQuickOpen(): void {
         return;
       }
       if (e.key === 'Enter') {
-        navigate(results[selectedIndex]!.href);
+        navigate(quickOpenResults[quickOpenSelectedIndex]!.href);
         return;
       }
     }
