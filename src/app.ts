@@ -363,23 +363,59 @@ async function loadNoteRows(query: string): Promise<NoteRow[]> {
 // `direction`, when given (1-hop linked pages only -- see renderLinkedPages),
 // shows which way the link between this page and the current one goes:
 // → this page links to it, ← it links to this page, ⇔ both.
-function pageCardsHtml(
-  items: { title: string; description: string; direction?: string }[],
-  linkBase: string,
-  emptyMessage: string
-): string {
-  if (items.length === 0) return `<p>${escapeHtml(emptyMessage)}</p>`;
-  const cards = items
-    .map(
-      (p) => `
+type PageCardItem = { title: string; description: string; direction?: string };
+
+function pageCardHtml(p: PageCardItem, linkBase: string): string {
+  return `
       <a class="page-card" href="${linkBase}${encodeURIComponent(p.title)}">
         ${p.direction ? `<span class="page-card-dir">${p.direction}</span>` : ''}
         <div class="page-card-title">${escapeHtml(p.title)}</div>
         <div class="page-card-desc">${escapeHtml(p.description)}</div>
-      </a>`
-    )
-    .join('');
-  return `<div class="page-cards">${cards}</div>`;
+      </a>`;
+}
+
+function pageCardsHtml(items: PageCardItem[], linkBase: string, emptyMessage: string): string {
+  if (items.length === 0) return `<p>${escapeHtml(emptyMessage)}</p>`;
+  return `<div class="page-cards">${items.map((p) => pageCardHtml(p, linkBase)).join('')}</div>`;
+}
+
+// Infinite-scroll variant for lists that can run long (the home note list,
+// the full reference list) -- `items` is already the complete, sorted array
+// (both loadNoteRows and reference-store's listPages/searchPages already
+// materialize everything before returning; slicing further here is free).
+// Only PAGE_SIZE cards go into the DOM up front; an IntersectionObserver on
+// a trailing sentinel reveals the next chunk as the user scrolls, so a
+// 10,000-page reference project doesn't render 10,000 cards at once.
+const INFINITE_SCROLL_PAGE_SIZE = 60;
+
+function mountInfiniteCards(container: HTMLElement, items: PageCardItem[], linkBase: string, emptyMessage: string): void {
+  if (items.length === 0) {
+    container.innerHTML = `<p>${escapeHtml(emptyMessage)}</p>`;
+    return;
+  }
+  container.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'page-cards';
+  container.appendChild(grid);
+  const sentinel = document.createElement('div');
+  sentinel.className = 'page-cards-sentinel';
+  container.appendChild(sentinel);
+
+  let shown = 0;
+  const revealNext = () => {
+    const next = items.slice(shown, shown + INFINITE_SCROLL_PAGE_SIZE);
+    grid.insertAdjacentHTML('beforeend', next.map((p) => pageCardHtml(p, linkBase)).join(''));
+    shown += next.length;
+    if (shown >= items.length) {
+      observer.disconnect();
+      sentinel.remove();
+    }
+  };
+  const observer = new IntersectionObserver((entries) => {
+    if (entries.some((e) => e.isIntersecting)) revealNext();
+  });
+  revealNext();
+  if (shown < items.length) observer.observe(sentinel);
 }
 
 // One full-content pass tallying how many *other* notes link to each note
@@ -465,10 +501,17 @@ async function renderPageList(query = ''): Promise<void> {
         <span>${rows.length} pages</span>
         ${sortSelectHtml('home-note-sort', NOTE_SORT_LABELS, homeNoteSort)}
       </div>
-      ${pageCardsHtml(rows, '#/page/', query ? '一致するページがありません。' : 'まだページがありません。上の入力欄から作成してください。')}
+      <div id="note-cards"></div>
       ${refSection}
     </div>`;
   wireQuickOpen();
+
+  mountInfiniteCards(
+    document.getElementById('note-cards')!,
+    rows,
+    '#/page/',
+    query ? '一致するページがありません。' : 'まだページがありません。上の入力欄から作成してください。'
+  );
 
   const input = document.getElementById('quick-open') as HTMLInputElement;
   input.value = query;
@@ -716,8 +759,6 @@ async function renderLinkedPages(title: string): Promise<void> {
   hop2ListEl.innerHTML = pageCardsHtml(hop2, '#/page/', 'なし');
 }
 
-const REFERENCE_LIST_LIMIT = 200;
-
 function referenceBanner(meta: { projectName: string; importedAt: number }): string {
   return `<p class="ref-banner">読み取り専用: ${escapeHtml(meta.projectName)} のスナップショット（${new Date(
     meta.importedAt * 1000
@@ -741,9 +782,7 @@ async function renderReferenceList(): Promise<void> {
   }
 
   const getVisitedAt = (title: string) => refVisits.getStats(title).lastVisited;
-  const { summaries, total } = await listReferencePages(REFERENCE_LIST_LIMIT, refSort, getVisitedAt);
-  const truncatedNote =
-    total > summaries.length ? `<p>先頭${summaries.length}件のみ表示中（全${total}件）。ホームの検索で絞り込めます。</p>` : '';
+  const { summaries, total } = await listReferencePages(Infinity, refSort, getVisitedAt);
 
   app.innerHTML = `
     ${topBar()}
@@ -754,10 +793,11 @@ async function renderReferenceList(): Promise<void> {
         <span>${total} pages</span>
         ${sortSelectHtml('ref-list-sort', REF_SORT_LABELS, refSort)}
       </div>
-      ${truncatedNote}
-      ${pageCardsHtml(summaries, '#/ref/', '一致するページがありません。')}
+      <div id="ref-cards"></div>
     </div>`;
   wireQuickOpen();
+
+  mountInfiniteCards(document.getElementById('ref-cards')!, summaries, '#/ref/', '一致するページがありません。');
 
   document.getElementById('ref-list-sort')?.addEventListener('change', (e) => {
     refSort = (e.target as HTMLSelectElement).value as ReferenceSortKey;

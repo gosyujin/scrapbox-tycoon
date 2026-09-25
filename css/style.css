@@ -244,6 +244,13 @@ body {
   .page-cards { grid-template-columns: repeat(3, 1fr); }
 }
 
+/* Invisible trigger for infinite-scroll card loading (see
+   mountInfiniteCards in app.ts) -- height gives IntersectionObserver
+   something to fire on slightly before it's actually scrolled into view. */
+.page-cards-sentinel {
+  height: 1px;
+}
+
 .page-card {
   position: relative;
   aspect-ratio: 1;
