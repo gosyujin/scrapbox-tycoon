@@ -339,24 +339,23 @@ function wireQuickOpen(): void {
 
   // Same dropdown on every page, including the list page -- which also
   // keeps its own separate debounced search wired below to re-filter the
-  // full card grid. The two don't conflict: this one's shorter delay
-  // (200ms vs. that one's 250ms) means the dropdown lands first as a fast
-  // preview, and the list's own re-render (which rebuilds the header from
-  // scratch) naturally clears it a beat later once the filtered grid is
-  // showing the same results in full.
-  wireDebouncedSearch(
-    input,
-    (query) => {
-      void (async () => {
-        results = await searchQuickOpen(query);
-        selectedIndex = 0;
-        // The debounce timer can resolve after the box lost focus (e.g.
-        // Enter already navigated away) -- don't pop a dropdown back up.
-        if (document.activeElement === input) renderQuickOpenDropdown(dropdown, results, selectedIndex);
-      })();
-    },
-    200
-  );
+  // full card grid. That re-render rebuilds the header from scratch on
+  // every keystroke pause, which would otherwise wipe the dropdown right
+  // back to empty each time (a fresh wireQuickOpen() call, no keystroke
+  // to re-trigger it) -- runSearch() also fires once immediately below
+  // if the restored input already has focus and a value, so the dropdown
+  // reappears in the same render instead of needing another keystroke.
+  const runSearch = (query: string) => {
+    void (async () => {
+      results = await searchQuickOpen(query);
+      selectedIndex = 0;
+      // Can resolve after the box lost focus (e.g. Enter already
+      // navigated away) -- don't pop a dropdown back up in that case.
+      if (document.activeElement === input) renderQuickOpenDropdown(dropdown, results, selectedIndex);
+    })();
+  };
+  wireDebouncedSearch(input, runSearch, 200);
+  if (document.activeElement === input && input.value.trim()) runSearch(input.value);
   input.addEventListener('focus', () => {
     if (results.length > 0) renderQuickOpenDropdown(dropdown, results, selectedIndex);
   });
@@ -629,7 +628,18 @@ async function renderPageList(query = ''): Promise<void> {
       <div id="note-cards"></div>
       ${refSection}
     </div>`;
+
+  // Restored before wireQuickOpen() so its own dropdown setup sees the
+  // input already at its post-render value/focus state and can re-open
+  // the dropdown immediately instead of waiting for another keystroke.
+  const input = document.getElementById('quick-open') as HTMLInputElement;
+  input.value = query;
+  if (hadFocus) {
+    input.focus();
+    input.setSelectionRange(query.length, query.length);
+  }
   wireQuickOpen();
+  wireDebouncedSearch(input, (nextQuery) => void renderPageList(nextQuery));
 
   mountInfiniteCards(
     document.getElementById('note-cards')!,
@@ -639,14 +649,6 @@ async function renderPageList(query = ''): Promise<void> {
   );
   if (refMeta) {
     mountInfiniteCards(document.getElementById('home-ref-cards')!, refSummaries, '#/ref/', '一致するページがありません。');
-  }
-
-  const input = document.getElementById('quick-open') as HTMLInputElement;
-  input.value = query;
-  wireDebouncedSearch(input, (nextQuery) => void renderPageList(nextQuery));
-  if (hadFocus) {
-    input.focus();
-    input.setSelectionRange(query.length, query.length);
   }
 
   document.getElementById('home-note-sort')?.addEventListener('change', (e) => {
