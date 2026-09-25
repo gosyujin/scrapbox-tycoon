@@ -176,7 +176,13 @@ export class GitHubSyncStore implements Store, SyncCapable {
   private scheduleSync(delayMs: number = AUTO_SYNC_DEBOUNCE_MS): void {
     if (this.disposed) return;
     clearTimeout(this.debounceTimer);
-    this.debounceTimer = setTimeout(() => void this.syncNow(), delayMs);
+    // runSync() already records the failure (status + the retry-after-
+    // failure timer below) before re-throwing -- that re-throw is for a
+    // direct awaiter like syncNow() or listOrphanedRemotePages() to react
+    // to, which nothing does here, so an uncaught one would otherwise
+    // surface as a raw "Uncaught (in promise)" console error on every
+    // transient/conflicting sync failure even though it's already handled.
+    this.debounceTimer = setTimeout(() => void this.syncNow().catch(() => {}), delayMs);
   }
 
   private setStatus(patch: Partial<SyncStatus>): void {
@@ -205,7 +211,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
         this.retryScheduled = true;
         this.debounceTimer = setTimeout(() => {
           this.retryScheduled = false;
-          void this.syncNow();
+          void this.syncNow().catch(() => {});
         }, RETRY_AFTER_FAILURE_MS);
       }
       throw err;
