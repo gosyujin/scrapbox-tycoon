@@ -28,6 +28,14 @@ export interface ReferenceMeta {
   projectName: string;
   importedAt: number;
   pageCount: number;
+  // Lower-cased titles that show up as a link target somewhere in the
+  // snapshot but have no page of their own -- real Scrapbox still colors
+  // these as normal (not missing) links, since a title becomes navigable
+  // the moment anything links to it, whether or not it was ever actually
+  // written. A common real-world case: a hub/tag-style title (e.g. an
+  // import script linking every post to a shared "archive" title) that's
+  // referenced by hundreds of pages but was never itself created.
+  hubTitles: string[];
 }
 
 interface RawLine {
@@ -94,12 +102,17 @@ export async function importExport(json: string): Promise<ReferenceMeta> {
   // looks the target up in title_to_page rather than counting every raw
   // linksLc entry.
   const linkedCount = new Map<string, number>();
+  // Every OTHER linksLc target -- referenced by something, but with no
+  // page of its own -- still counts as a valid (non-missing) link target
+  // in real Scrapbox (see ReferenceMeta.hubTitles).
+  const hubTitles = new Set<string>();
   for (const p of rawPages) {
     const seen = new Set<string>();
     for (const lc of p.linksLc || []) {
-      if (!knownLc.has(lc) || seen.has(lc)) continue;
+      if (seen.has(lc)) continue;
       seen.add(lc);
-      linkedCount.set(lc, (linkedCount.get(lc) ?? 0) + 1);
+      if (knownLc.has(lc)) linkedCount.set(lc, (linkedCount.get(lc) ?? 0) + 1);
+      else hubTitles.add(lc);
     }
   }
 
@@ -126,6 +139,7 @@ export async function importExport(json: string): Promise<ReferenceMeta> {
     projectName: data.displayName || data.name || 'reference',
     importedAt: now,
     pageCount: count,
+    hubTitles: [...hubTitles],
   };
   tx.objectStore(META_STORE).put(meta, 'meta');
   await txDone(tx);
@@ -241,12 +255,18 @@ async function scanAll(): Promise<ReferencePage[]> {
 // For the link exists/missing color-coding (see parser.ts's RenderOpts) --
 // getAllKeys() reads only the keyPath (title) for every record, skipping
 // the full page bodies that scanAll()'s cursor would otherwise pull in.
+// Includes meta.hubTitles alongside the real page titles, so a title
+// that's only ever a link target (no page of its own) still counts as
+// existing -- matching real Scrapbox rather than showing it as missing.
 export async function getAllTitlesLowercased(): Promise<Set<string>> {
   const db = await openDb();
-  const tx = db.transaction(PAGES_STORE, 'readonly');
+  const tx = db.transaction([PAGES_STORE, META_STORE], 'readonly');
   const keys = await reqResult<IDBValidKey[]>(tx.objectStore(PAGES_STORE).getAllKeys());
+  const meta = await reqResult<ReferenceMeta | undefined>(tx.objectStore(META_STORE).get('meta'));
   db.close();
-  return new Set(keys.map((k) => String(k).toLowerCase()));
+  const titles = new Set(keys.map((k) => String(k).toLowerCase()));
+  for (const t of meta?.hubTitles ?? []) titles.add(t);
+  return titles;
 }
 
 // Original-cased titles (unlike getAllTitlesLowercased, which throws away
