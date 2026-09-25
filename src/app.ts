@@ -788,10 +788,24 @@ async function renderPage(title: string): Promise<void> {
       }
     },
     onChange: async (lines) => {
-      let newTitle = lines[0] || currentTitle;
+      let newTitle = lines[0];
       let mergeCandidate: string | undefined;
 
-      if (newTitle !== currentTitle) {
+      if (!newTitle) {
+        // Matches Scrapbox: a page emptied down to nothing becomes
+        // "Untitled" (next free "_N" suffix if that's already taken),
+        // not a silent no-op that leaves the page's own identity (used
+        // for the card list, the URL, etc.) pointing at a title its
+        // first line no longer has -- which is what keeping the *old*
+        // title here used to do: the list still showed the old title,
+        // but the page itself rendered as completely blank.
+        newTitle = /^Untitled(_\d+)?$/.test(currentTitle)
+          ? currentTitle // already an empty Untitled-family page being re-saved as still empty -- keep its identity rather than bumping to a new suffix every time the editor is merely opened and closed
+          : (await store.getPage('Untitled'))
+            ? await uniqueTitle('Untitled')
+            : 'Untitled';
+        lines = [newTitle, ...lines.slice(1)];
+      } else if (newTitle !== currentTitle) {
         const collision = await store.getPage(newTitle);
         if (collision) {
           mergeCandidate = newTitle;
