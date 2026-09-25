@@ -221,7 +221,10 @@ function topBar(hasRef: boolean): string {
       <a href="#/" class="brand">scrapbox-tycoon</a>
       <div class="quick-open-row">
         <button id="quick-add" class="quick-add" title="ページを追加" aria-label="ページを追加">+</button>
-        <input id="quick-open" class="quick-open" placeholder="開く/作成 (Enter) ・ 一覧では検索にも使えます" />
+        <div class="quick-open-wrap">
+          <input id="quick-open" class="quick-open" placeholder="開く/作成 (Enter) ・ 入力で検索" autocomplete="off" />
+          <div id="quick-open-dropdown" class="quick-open-dropdown" hidden></div>
+        </div>
       </div>
       <nav>
         ${hasRef ? '<a href="#/ref" title="参照一覧" aria-label="参照一覧">📖</a>' : ''}
@@ -249,9 +252,71 @@ async function goToRandomReferencePage(): Promise<void> {
   navigate(`#/ref/${encodeURIComponent(pick)}`);
 }
 
-function wireQuickOpen(): void {
+interface QuickOpenResult {
+  title: string;
+  href: string;
+  source: 'note' | 'ref';
+}
+
+// The header's search box's own dropdown (Scrapbox shows hit pages right
+// below the search field on every page, not just a dedicated list page).
+// The home page keeps its existing full-list live-filter instead -- this
+// is only for everywhere else, where typing previously did nothing until
+// Enter. Reuses loadNoteRows/searchReferencePages (the same full-scan
+// search the home page and #/ref already pay for) rather than a separate
+// index; capped to a handful of results per source since this is a
+// glanceable dropdown, not a results page.
+async function searchQuickOpen(query: string): Promise<QuickOpenResult[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const qLower = q.toLowerCase();
+  const titleFirst = (a: { title: string }, b: { title: string }) => {
+    const ar = a.title.toLowerCase().startsWith(qLower) ? 0 : 1;
+    const br = b.title.toLowerCase().startsWith(qLower) ? 0 : 1;
+    return ar - br;
+  };
+
+  const noteRows = (await loadNoteRows(q)).slice(0, 8).sort(titleFirst);
+  const noteResults: QuickOpenResult[] = noteRows.map((r) => ({
+    title: r.title,
+    href: `#/page/${encodeURIComponent(r.title)}`,
+    source: 'note',
+  }));
+
+  const refMeta = await getReferenceMeta();
+  let refResults: QuickOpenResult[] = [];
+  if (refMeta) {
+    const { summaries } = await searchReferencePages(q, 8, 'modified', () => 0);
+    refResults = summaries
+      .slice()
+      .sort(titleFirst)
+      .map((r) => ({ title: r.title, href: `#/ref/${encodeURIComponent(r.title)}`, source: 'ref' }));
+  }
+  return [...noteResults, ...refResults].slice(0, 10);
+}
+
+function renderQuickOpenDropdown(dropdown: HTMLElement, results: QuickOpenResult[], selectedIndex: number): void {
+  if (results.length === 0) {
+    dropdown.hidden = true;
+    dropdown.innerHTML = '';
+    return;
+  }
+  dropdown.innerHTML = results
+    .map(
+      (r, i) => `
+      <a class="quick-open-item${i === selectedIndex ? ' is-selected' : ''}" href="${r.href}">
+        <span class="quick-open-item-title">${escapeHtml(r.title)}</span>
+        ${r.source === 'ref' ? '<span class="quick-open-item-source">参照</span>' : ''}
+      </a>`
+    )
+    .join('');
+  dropdown.hidden = false;
+}
+
+function wireQuickOpen(enableDropdown = true): void {
   const input = document.getElementById('quick-open') as HTMLInputElement;
   const addBtn = document.getElementById('quick-add') as HTMLButtonElement;
+  const dropdown = document.getElementById('quick-open-dropdown') as HTMLDivElement;
   document.getElementById('random-btn')!.addEventListener('click', () => {
     void goToRandomReferencePage();
   });
@@ -262,8 +327,65 @@ function wireQuickOpen(): void {
   input.addEventListener('compositionend', () => {
     composing = false;
   });
+
+  let results: QuickOpenResult[] = [];
+  let selectedIndex = 0;
+  const closeDropdown = () => {
+    results = [];
+    selectedIndex = 0;
+    dropdown.hidden = true;
+    dropdown.innerHTML = '';
+  };
+
+  if (enableDropdown) {
+    wireDebouncedSearch(
+      input,
+      (query) => {
+        void (async () => {
+          results = await searchQuickOpen(query);
+          selectedIndex = 0;
+          // The debounce timer can resolve after the box lost focus (e.g.
+          // Enter already navigated away) -- don't pop a dropdown back up.
+          if (document.activeElement === input) renderQuickOpenDropdown(dropdown, results, selectedIndex);
+        })();
+      },
+      200
+    );
+    input.addEventListener('focus', () => {
+      if (results.length > 0) renderQuickOpenDropdown(dropdown, results, selectedIndex);
+    });
+    // Delayed so a click/tap on a dropdown item -- which blurs the input
+    // first -- still gets to fire its own click and navigate before the
+    // dropdown disappears out from under it.
+    input.addEventListener('blur', () => {
+      setTimeout(closeDropdown, 150);
+    });
+  }
+
   input.addEventListener('keydown', (e) => {
     if (composing || e.isComposing) return;
+    if (enableDropdown && !dropdown.hidden && results.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectedIndex = Math.min(selectedIndex + 1, results.length - 1);
+        renderQuickOpenDropdown(dropdown, results, selectedIndex);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectedIndex = Math.max(selectedIndex - 1, 0);
+        renderQuickOpenDropdown(dropdown, results, selectedIndex);
+        return;
+      }
+      if (e.key === 'Escape') {
+        closeDropdown();
+        return;
+      }
+      if (e.key === 'Enter') {
+        navigate(results[selectedIndex]!.href);
+        return;
+      }
+    }
     if (e.key === 'Enter' && input.value.trim()) {
       navigate(`#/page/${encodeURIComponent(input.value.trim())}`);
     }
@@ -502,7 +624,10 @@ async function renderPageList(query = ''): Promise<void> {
       <div id="note-cards"></div>
       ${refSection}
     </div>`;
-  wireQuickOpen();
+  // The list page already filters its own full card grid live as you
+  // type (see wireDebouncedSearch below) -- the header's dropdown variant
+  // is for everywhere else, where that isn't available.
+  wireQuickOpen(false);
 
   mountInfiniteCards(
     document.getElementById('note-cards')!,

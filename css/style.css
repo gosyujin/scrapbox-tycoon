@@ -119,15 +119,62 @@ body {
   opacity: 0.8;
 }
 
-.quick-open {
+.quick-open-wrap {
+  position: relative;
   flex: 1;
+  min-width: 0;
+}
+
+.quick-open {
+  width: 100%;
   padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
   color: var(--fg);
-  min-width: 0;
   font-size: 16px; /* see .page-edit: avoids iOS Safari's zoom-on-focus */
+}
+
+/* The header search box's own hit-page dropdown (Scrapbox shows this on
+   every page, not just a dedicated search results page) -- see
+   wireQuickOpen/searchQuickOpen in app.ts. */
+.quick-open-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  z-index: 15;
+}
+.quick-open-dropdown[hidden] { display: none; }
+
+.quick-open-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  color: var(--fg);
+  text-decoration: none;
+}
+.quick-open-item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quick-open-item-source {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.quick-open-item:hover,
+.quick-open-item.is-selected {
+  background: var(--accent);
 }
 
 .topbar nav a,
