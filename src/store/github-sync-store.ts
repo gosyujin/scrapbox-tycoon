@@ -13,10 +13,16 @@
 // on each sync, pages NOT in the local dirty set are refreshed from remote
 // (picking up other devices' edits); pages IN the dirty set are pushed as
 // they are locally, overwriting whatever is on GitHub. Editing the exact
-// same page on two devices between syncs is the one case that is not
-// merged — the more recent sync simply wins — acceptable for a single-user
-// tool syncing every few seconds, not worth the complexity of a real
-// merge/conflict UI here.
+// same page on two devices between syncs is not merged line-by-line — the
+// more recent sync simply wins for that title — acceptable for a
+// single-user tool syncing every few seconds, not worth the complexity of a
+// real merge/conflict UI here. What is NOT acceptable is losing the other
+// side's edit silently: if pull() sees that a locally-dirty page's remote
+// `updated` no longer matches what we last synced (i.e. someone else really
+// did change it in between, not just "we haven't looked yet"), it stashes
+// the remote content as a separate page tagged with `mergeCandidate`, the
+// same "don't overwrite, save alongside and let the user merge" mechanism
+// app.ts already uses for rename collisions.
 import { LocalStore } from './local-store.js';
 import { GitHubStore, type GitHubStoreConfig, type PageChange } from './github-store.js';
 import type { Page, PageSummary, PageInput, Store, SyncStatus, SyncCapable } from '../types.js';
@@ -35,6 +41,12 @@ interface SyncMeta {
   // title -> remote `updated` as of the last successful sync; used to tell
   // whether a page changed on the remote since we last looked at it.
   lastSyncedUpdated: Record<string, number>;
+  // title -> remote `updated` value we've already split off into a
+  // "(sync conflict)" page for. Without this, a locally-dirty page that
+  // keeps failing to push (see RETRY_AFTER_FAILURE_MS) would get a fresh
+  // conflict copy stashed on every retry's pull(), since the divergence
+  // that triggered it is still there until our push actually lands.
+  conflictSeen: Record<string, number>;
   // Persisted (not just kept on the instance) so the debug display in the
   // page list still shows the last-known-good commit across a reload,
   // before this device has synced again.
@@ -48,10 +60,11 @@ function readMeta(): SyncMeta {
       dirty: Array.isArray(raw.dirty) ? raw.dirty : [],
       deleted: Array.isArray(raw.deleted) ? raw.deleted : [],
       lastSyncedUpdated: raw.lastSyncedUpdated && typeof raw.lastSyncedUpdated === 'object' ? raw.lastSyncedUpdated : {},
+      conflictSeen: raw.conflictSeen && typeof raw.conflictSeen === 'object' ? raw.conflictSeen : {},
       lastSyncedCommitSha: typeof raw.lastSyncedCommitSha === 'string' ? raw.lastSyncedCommitSha : null,
     };
   } catch {
-    return { dirty: [], deleted: [], lastSyncedUpdated: {}, lastSyncedCommitSha: null };
+    return { dirty: [], deleted: [], lastSyncedUpdated: {}, conflictSeen: {}, lastSyncedCommitSha: null };
   }
 }
 
@@ -283,6 +296,39 @@ export class GitHubSyncStore implements Store, SyncCapable {
     }
   }
 
+  // Called from pull() for a title that's locally dirty (so push() is about
+  // to overwrite it on the remote). If remoteUpdated no longer matches what
+  // we last synced for this title, someone else genuinely changed it in
+  // between -- not just "we haven't looked since our own edit". Rather than
+  // let push() silently discard that other change, fetch it and save it as
+  // a separate page tagged with mergeCandidate pointing back at the real
+  // title, so the existing rename-collision banner (see app.ts) lets the
+  // user merge it in whenever they notice.
+  private async stashConflictIfDiverged(title: string, remoteUpdated: number): Promise<void> {
+    const knownRemoteUpdated = this.meta.lastSyncedUpdated[title];
+    if (knownRemoteUpdated === undefined || knownRemoteUpdated === remoteUpdated) return;
+    if (this.meta.conflictSeen[title] === remoteUpdated) return; // already stashed this exact divergence
+    const remotePage = await this.remote.getPage(title);
+    if (!remotePage) return;
+    const conflictTitle = await this.uniqueConflictTitle(`${title} (sync conflict)`);
+    await this.local.savePage({
+      title: conflictTitle,
+      lines: remotePage.lines,
+      created: remotePage.created,
+      updated: remotePage.updated,
+      mergeCandidate: title,
+    });
+    this.markDirty(conflictTitle); // so this same sync's push() also lands it on the remote
+    this.meta.conflictSeen[title] = remoteUpdated;
+  }
+
+  private async uniqueConflictTitle(base: string): Promise<string> {
+    if (!(await this.local.getPage(base))) return base;
+    let n = 2;
+    while (await this.local.getPage(`${base}_${n}`)) n++;
+    return `${base}_${n}`;
+  }
+
   private async pull(): Promise<void> {
     const remoteEntries = await this.remote.listPages();
 
@@ -293,7 +339,10 @@ export class GitHubSyncStore implements Store, SyncCapable {
       // is still honored: without this, a remote copy fetched a moment
       // later here could overwrite that brand-new local edit before it's
       // ever pushed.
-      if (this.meta.dirty.includes(entry.title)) continue; // our local edit will win on push
+      if (this.meta.dirty.includes(entry.title)) {
+        await this.stashConflictIfDiverged(entry.title, entry.updated);
+        continue; // our local edit still wins on push for this title
+      }
       if (this.meta.lastSyncedUpdated[entry.title] === entry.updated) continue; // unchanged
       const remotePage = await this.remote.getPage(entry.title);
       if (remotePage) {
@@ -356,5 +405,9 @@ export class GitHubSyncStore implements Store, SyncCapable {
     const pushedDeleted = new Set(deletedTitles);
     this.meta.dirty = this.meta.dirty.filter((t) => !pushedDirty.has(t));
     this.meta.deleted = this.meta.deleted.filter((t) => !pushedDeleted.has(t));
+    // The divergence that triggered a stashed conflict is resolved once our
+    // own push for that title actually lands -- lastSyncedUpdated above is
+    // about to be reset to it, so any future divergence is a new one.
+    for (const title of dirtyTitles) delete this.meta.conflictSeen[title];
   }
 }
