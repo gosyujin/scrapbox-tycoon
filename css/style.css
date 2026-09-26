@@ -775,10 +775,15 @@ blockquote.sb-quote {
 
 /* Per-page debug line (see renderPage() in app.ts): this page's own
    `updated` timestamp next to the store-wide last-synced commit+time, so a
-   suspected sync-timing mismatch can be spotted without leaving the page. */
+   suspected sync-timing mismatch can be spotted without leaving the page.
+   Sits right above the editor; kept to one line (ellipsized rather than
+   wrapped) even on a narrow phone screen. */
 .sync-page-line {
-  margin-top: 24px;
+  margin-bottom: 8px;
   font-size: 11px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 @media (max-width: 480px) {

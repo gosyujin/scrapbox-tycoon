@@ -133,12 +133,13 @@ function backendBadgeLabel(): string {
   return isSyncCapable(store) ? `${settings.owner}/${settings.repo}@${settings.branch}` : 'Local (this browser only)';
 }
 
-// yyyy/M/d H:m:s in local time, deliberately unpadded (matches how the
-// sync-status debug UI is meant to be read at a glance, not a fixed-width
-// log format).
+// yyyy/M/d H:mm:ss in local time -- date part and the hour are unpadded,
+// minutes/seconds are zero-padded (an unpadded "14:5:9" reads as broken,
+// not just terse).
 function formatSyncTimestamp(epochSeconds: number): string {
   const d = new Date(epochSeconds * 1000);
-  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${d.getMinutes()}:${d.getSeconds()}`;
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
 
 // "<hash>(<time>) [Modified]" -- the last repo commit this device last
@@ -763,6 +764,11 @@ async function renderPage(title: string): Promise<void> {
       ${isNew ? '<p class="muted">新規ページ（最初の行を編集すると保存されます）</p>' : ''}
       ${mergeBanner}
       ${refDuplicateBanner}
+      ${
+        isSyncCapable(store) && !isNew
+          ? `<p class="muted sync-page-line">同期: ${syncCommitBadgeHtml()} ・ 更新: ${escapeHtml(formatSyncTimestamp(page.updated))}</p>`
+          : ''
+      }
       <div id="editor"></div>
       <section class="linked">
         <h3 id="linked-heading">リンク</h3>
@@ -770,11 +776,6 @@ async function renderPage(title: string): Promise<void> {
         <h3 id="linked-2hop-heading">2ホップリンク</h3>
         <div id="backlinks-2hop">読み込み中...</div>
       </section>
-      ${
-        isSyncCapable(store) && !isNew
-          ? `<p class="muted sync-page-line">同期: ${syncCommitBadgeHtml()} ・ このページの更新: ${escapeHtml(formatSyncTimestamp(page.updated))}</p>`
-          : ''
-      }
     </div>`;
   wireQuickOpen();
 
