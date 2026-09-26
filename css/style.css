@@ -773,6 +773,14 @@ blockquote.sb-quote {
 .sync-commit { font-variant-numeric: tabular-nums; }
 .sync-modified { color: var(--link-missing); font-weight: 700; }
 
+/* Per-page debug line (see renderPage() in app.ts): this page's own
+   `updated` timestamp next to the store-wide last-synced commit+time, so a
+   suspected sync-timing mismatch can be spotted without leaving the page. */
+.sync-page-line {
+  margin-top: 24px;
+  font-size: 11px;
+}
+
 @media (max-width: 480px) {
   .sync-line-break { display: block; width: 100%; }
 }

@@ -17,10 +17,29 @@
   localStorage の `scrapbox_tycoon_sync_log_v1`) を確認する。** ここで
   `state=idle` かつ `lastError` なしで完了していれば、GitHub 同期層
   (`github-store.ts` / `github-sync-store.ts`) は無関係と判断してよく、
-  ローカルのデータ整合性側を疑う方が早い。
+  ローカルのデータ整合性側を疑う方が早い —— **ただし例外として、
+  ブラウザの HTTP キャッシュ絡みの不具合 (README の「6. 同期直後に
+  PC/スマホの表示が古い内容へ『巻き戻る』問題」参照) はこのヒューリスティック
+  をすり抜ける。** GitHub 側のレスポンスがそのまま古いだけなので `state=idle`
+  かつ `lastError` なしで「正常に」完了して見える。「同期後もページ一覧/
+  ページ本体の内容が古いまま」という報告では、ログが正常でも
+  `github-store.ts` の fetch がキャッシュを無効化しているか
+  (`cache: 'no-store'`) を併せて疑うこと。
+
+- **`GitHubStore` 内の全 `fetch()` には `cache: 'no-store'` を必ず付ける。**
+  `GET git/ref/heads/<branch>` (ブランチ先端を読む唯一の入口) は
+  `Cache-Control: public, max-age=60, s-maxage=60` を返す (実 API で確認済み)。
+  書き込み先の `PATCH git/refs/heads/<branch>` (複数形) はこの GET
+  (単数形) と別 URL なので、ブラウザはこの PATCH でその GET のキャッシュを
+  無効化する手段を持たない —— つまり指定なしだと、自分自身の commit
+  直後でも最大60秒間、書き込み前の古い ref が返り得る。`pull()` はこれを
+  「他デバイスの変更」と誤認してローカルを古い内容で上書きしてしまう
+  (README の「6.」参照)。`git/commits/<sha>` や `git/trees/<sha>` のような
+  sha 直参照はキャッシュされても内容的には無害だが、可変な ref だけ
+  個別対応するより全リクエスト一律で無効化する方が単純。
 
 - **`Could not save after 8 attempts: branch moved during save` のような
-  「外的要因が絡む」エラーは、手元のモック (`test/mock-github-api.mjs`) だけで
+  「外的要因が絡む」エラーは、手元のモック (`test/helpers/mock-github-api.mjs`) だけで
   無理に再現しようとしない。** このリポジトリでの調査では、単一操作や
   2 インスタンス同時同期のシミュレーションでは再現せず、実際には複数タブ/
   デバイスの同時書き込みや回線起因である可能性が高いという結論に至った。
@@ -47,7 +66,7 @@
   `blur` イベントリスナーを発火させないことがある (新規ページ限定の
   バグに見えたが、実際はテスト手法側の問題だった)。
 
-- 新しい回帰テストを書くときは既存の `test/mock-github-api.mjs` (インメモリ
+- 新しい回帰テストを書くときは既存の `test/helpers/mock-github-api.mjs` (インメモリ
   Git Data API モデル、fast-forward-only な ref 更新) を使い、コンパイル後の
   `js/store/...` (再実装ではなく実際のビルド成果物) に対してテストする、
   という既存パターンに合わせる。

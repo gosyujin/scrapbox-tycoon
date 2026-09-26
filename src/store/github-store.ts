@@ -94,8 +94,25 @@ export class GitHubStore {
     return `${API}/repos/${this.owner}/${this.repo}/${path}`;
   }
 
+  // cache: 'no-store' matters specifically for the ref read below: GitHub
+  // serves GET git/ref/heads/<branch> with `Cache-Control: public,
+  // max-age=60` (confirmed against the live API), so the default fetch
+  // cache mode can hand back a branch tip from up to a minute ago even
+  // right after this same device's own commit moved it -- the write goes
+  // to git/refs/heads/<branch> (plural), a *different* URL than this GET
+  // (singular git/ref/...), so the browser has no way to invalidate the
+  // cached read when the write lands. Without this, pull() can briefly
+  // read an old commit, decide a page "changed" relative to what it just
+  // synced, and overwrite the just-written local copy with stale content
+  // until that 60s window expires -- observed in practice as an edit
+  // "rolling back" locally on its own after a successful sync, self-
+  // healing only once enough real time (or luck across reloads/relaunches)
+  // passes. The commit/tree/blob-by-sha reads below are also affected by
+  // Cache-Control, but harmlessly -- those URLs are content-addressed, so a
+  // cached response for one is always correct for that exact sha; only the
+  // mutable branch-tip pointer can go stale in a way that matters.
   private async api<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(this.repoUrl(path), { ...init, headers: this.headers() });
+    const res = await fetch(this.repoUrl(path), { ...init, headers: this.headers(), cache: 'no-store' });
     if (!res.ok) throw new Error(`GitHub ${init?.method || 'GET'} ${path} failed: ${res.status} ${await res.text()}`);
     return res.json();
   }
@@ -173,6 +190,7 @@ export class GitHubStore {
         const updateRes = await fetch(this.repoUrl(`git/refs/heads/${this.branch}`), {
           method: 'PATCH',
           headers: this.headers(),
+          cache: 'no-store',
           body: JSON.stringify({ sha: newCommit.sha, force: false }),
         });
         if (updateRes.ok) return;

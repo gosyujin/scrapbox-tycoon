@@ -141,29 +141,37 @@ function formatSyncTimestamp(epochSeconds: number): string {
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${d.getMinutes()}:${d.getSeconds()}`;
 }
 
-// The connection line at the top of the notes list: repo (linked to the
-// actual GitHub tree at the synced branch), page count, and -- for
-// debugging sync-timing issues (a page edited on one device before another
-// device has pulled the delete/merge that removed it there; see chat) --
-// the repo commit this device last confirmed it was in sync with, and
-// whether local edits have piled up since then.
-function syncInfoHtml(pageCount: number): string {
-  if (!isSyncCapable(store)) {
-    return `<span class="backend-badge">${escapeHtml(backendBadgeLabel())}</span><span>${pageCount} pages</span>`;
-  }
+// "<hash>(<time>) [Modified]" -- the last repo commit this device last
+// confirmed it was in sync with, and whether local edits have piled up
+// since then. Shared by the notes-list connection line and the per-page
+// debug line below (see chat: a page edited on one device before another
+// device has pulled the delete/merge that removed it there is exactly the
+// kind of sync-timing bug this is for).
+function syncCommitBadgeHtml(): string {
+  if (!isSyncCapable(store)) return '';
   const status = store.getSyncStatus();
-  const repoHref = `https://github.com/${settings.owner}/${settings.repo}/tree/${settings.branch}`;
-  const badge = `<a class="backend-badge" href="${escapeAttr(repoHref)}" target="_blank" rel="noopener noreferrer">${escapeHtml(backendBadgeLabel())}</a>`;
   const commitText =
     status.lastSyncedCommitSha && status.lastSyncedAt
       ? `${status.lastSyncedCommitSha.slice(0, 7)}(${formatSyncTimestamp(status.lastSyncedAt)})`
       : '(未同期)';
   const modified = status.dirtyCount > 0 ? ` <span class="sync-modified">[Modified]</span>` : '';
+  return `<span class="sync-commit">${escapeHtml(commitText)}</span>${modified}`;
+}
+
+// The connection line at the top of the notes list: repo (linked to the
+// actual GitHub tree at the synced branch), page count, and the sync-commit
+// badge above.
+function syncInfoHtml(pageCount: number): string {
+  if (!isSyncCapable(store)) {
+    return `<span class="backend-badge">${escapeHtml(backendBadgeLabel())}</span><span>${pageCount} pages</span>`;
+  }
+  const repoHref = `https://github.com/${settings.owner}/${settings.repo}/tree/${settings.branch}`;
+  const badge = `<a class="backend-badge" href="${escapeAttr(repoHref)}" target="_blank" rel="noopener noreferrer">${escapeHtml(backendBadgeLabel())}</a>`;
   return `
     ${badge}
     <span>${pageCount} pages</span>
     <span class="sync-line-break"></span>
-    <span class="sync-commit">${escapeHtml(commitText)}</span>${modified}`;
+    ${syncCommitBadgeHtml()}`;
 }
 
 function updateBadge(): void {
@@ -762,6 +770,11 @@ async function renderPage(title: string): Promise<void> {
         <h3 id="linked-2hop-heading">2ホップリンク</h3>
         <div id="backlinks-2hop">読み込み中...</div>
       </section>
+      ${
+        isSyncCapable(store) && !isNew
+          ? `<p class="muted sync-page-line">同期: ${syncCommitBadgeHtml()} ・ このページの更新: ${escapeHtml(formatSyncTimestamp(page.updated))}</p>`
+          : ''
+      }
     </div>`;
   wireQuickOpen();
 
