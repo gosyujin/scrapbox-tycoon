@@ -37,6 +37,10 @@ export interface SyncStatus {
   state: 'idle' | 'syncing' | 'error';
   dirtyCount: number;
   lastSyncedAt: number | null;
+  // The remote branch's HEAD commit sha as observed right after the last
+  // successful sync (not necessarily a commit *this* device made -- pull-
+  // only syncs pick this up too). Null until the first successful sync.
+  lastSyncedCommitSha: string | null;
   lastError: string | null;
 }
 

@@ -745,12 +745,36 @@ blockquote.sb-quote {
 }
 
 /* Reused in-flow at the top of the notes/reference lists too, not just
-   the fixed footer -- see renderPageList()/renderReferenceList(). */
+   the fixed footer -- see renderPageList()/renderReferenceList(). It's an
+   <a> to the repo when sync is on (see syncInfoHtml() in app.ts), so it
+   needs its own text-decoration reset rather than relying on the plain
+   `a` rule. */
 .backend-badge {
   background: var(--accent);
   padding: 3px 8px;
   border-radius: 10px;
   flex-shrink: 1;
+  text-decoration: none;
+}
+.backend-badge:hover { text-decoration: underline; }
+
+/* The connection line atop the notes list (repo link, page count, last
+   synced commit+time, [Modified] flag) -- see syncInfoHtml() in app.ts.
+   Wraps to two lines on narrow screens via .sync-line-break rather than
+   flex-direction: column, so it stays a single line on desktop without a
+   separate layout branch. */
+.sync-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+.sync-line-break { display: none; }
+.sync-commit { font-variant-numeric: tabular-nums; }
+.sync-modified { color: var(--link-missing); font-weight: 700; }
+
+@media (max-width: 480px) {
+  .sync-line-break { display: block; width: 100%; }
 }
 
 .build-info {

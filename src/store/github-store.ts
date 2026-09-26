@@ -192,6 +192,13 @@ export class GitHubStore {
     throw new Error(`Could not save after ${MAX_COMMIT_ATTEMPTS} attempts: ${reason}`);
   }
 
+  // The remote branch's current HEAD commit sha -- used by GitHubSyncStore
+  // purely for display (debugging "did my sync actually land, and when"),
+  // not for any conflict logic here.
+  async getHeadCommitSha(): Promise<string> {
+    return this.currentBranchCommit();
+  }
+
   async listPages(): Promise<PageSummary[]> {
     const entries = await this.readIndexAt(await this.currentBranchCommit());
     return entries.map((e) => ({ title: e.title, updated: e.updated })).sort((a, b) => b.updated - a.updated);

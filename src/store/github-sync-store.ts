@@ -35,6 +35,10 @@ interface SyncMeta {
   // title -> remote `updated` as of the last successful sync; used to tell
   // whether a page changed on the remote since we last looked at it.
   lastSyncedUpdated: Record<string, number>;
+  // Persisted (not just kept on the instance) so the debug display in the
+  // page list still shows the last-known-good commit across a reload,
+  // before this device has synced again.
+  lastSyncedCommitSha: string | null;
 }
 
 function readMeta(): SyncMeta {
@@ -44,9 +48,10 @@ function readMeta(): SyncMeta {
       dirty: Array.isArray(raw.dirty) ? raw.dirty : [],
       deleted: Array.isArray(raw.deleted) ? raw.deleted : [],
       lastSyncedUpdated: raw.lastSyncedUpdated && typeof raw.lastSyncedUpdated === 'object' ? raw.lastSyncedUpdated : {},
+      lastSyncedCommitSha: typeof raw.lastSyncedCommitSha === 'string' ? raw.lastSyncedCommitSha : null,
     };
   } catch {
-    return { dirty: [], deleted: [], lastSyncedUpdated: {} };
+    return { dirty: [], deleted: [], lastSyncedUpdated: {}, lastSyncedCommitSha: null };
   }
 }
 
@@ -105,6 +110,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
       state: 'idle',
       dirtyCount: this.meta.dirty.length + this.meta.deleted.length,
       lastSyncedAt: null,
+      lastSyncedCommitSha: this.meta.lastSyncedCommitSha,
       lastError: null,
     };
     // Pick up any changes made on other devices since we were last open.
@@ -247,12 +253,20 @@ export class GitHubSyncStore implements Store, SyncCapable {
     try {
       await this.pull();
       await this.push();
+      // Read HEAD fresh rather than reusing whatever pull()/push() last saw:
+      // a pull-only sync (nothing local to push) still lands on whatever
+      // another device most recently committed, and this is purely a
+      // display value, not something conflict logic depends on, so one
+      // extra cheap read here is simpler than threading the sha through
+      // both methods' different code paths.
+      this.meta.lastSyncedCommitSha = await this.remote.getHeadCommitSha();
       writeMeta(this.meta);
       this.retryScheduled = false;
       this.setStatus({
         state: 'idle',
         dirtyCount: this.meta.dirty.length + this.meta.deleted.length,
         lastSyncedAt: Math.floor(Date.now() / 1000),
+        lastSyncedCommitSha: this.meta.lastSyncedCommitSha,
         lastError: null,
       });
     } catch (err) {

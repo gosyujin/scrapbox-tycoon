@@ -133,6 +133,39 @@ function backendBadgeLabel(): string {
   return isSyncCapable(store) ? `${settings.owner}/${settings.repo}@${settings.branch}` : 'Local (this browser only)';
 }
 
+// yyyy/M/d H:m:s in local time, deliberately unpadded (matches how the
+// sync-status debug UI is meant to be read at a glance, not a fixed-width
+// log format).
+function formatSyncTimestamp(epochSeconds: number): string {
+  const d = new Date(epochSeconds * 1000);
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${d.getMinutes()}:${d.getSeconds()}`;
+}
+
+// The connection line at the top of the notes list: repo (linked to the
+// actual GitHub tree at the synced branch), page count, and -- for
+// debugging sync-timing issues (a page edited on one device before another
+// device has pulled the delete/merge that removed it there; see chat) --
+// the repo commit this device last confirmed it was in sync with, and
+// whether local edits have piled up since then.
+function syncInfoHtml(pageCount: number): string {
+  if (!isSyncCapable(store)) {
+    return `<span class="backend-badge">${escapeHtml(backendBadgeLabel())}</span><span>${pageCount} pages</span>`;
+  }
+  const status = store.getSyncStatus();
+  const repoHref = `https://github.com/${settings.owner}/${settings.repo}/tree/${settings.branch}`;
+  const badge = `<a class="backend-badge" href="${escapeAttr(repoHref)}" target="_blank" rel="noopener noreferrer">${escapeHtml(backendBadgeLabel())}</a>`;
+  const commitText =
+    status.lastSyncedCommitSha && status.lastSyncedAt
+      ? `${status.lastSyncedCommitSha.slice(0, 7)}(${formatSyncTimestamp(status.lastSyncedAt)})`
+      : '(未同期)';
+  const modified = status.dirtyCount > 0 ? ` <span class="sync-modified">[Modified]</span>` : '';
+  return `
+    ${badge}
+    <span>${pageCount} pages</span>
+    <span class="sync-line-break"></span>
+    <span class="sync-commit">${escapeHtml(commitText)}</span>${modified}`;
+}
+
 function updateBadge(): void {
   if (isSyncCapable(store)) {
     syncStatusEl.textContent = describeSyncStatus(store.getSyncStatus());
@@ -641,8 +674,7 @@ async function renderPageList(query = ''): Promise<void> {
     ${topBar(!!refMeta)}
     <div class="content">
       <div class="sort-bar">
-        <span id="backend-badge" class="backend-badge">${escapeHtml(backendBadgeLabel())}</span>
-        <span>${rows.length} pages</span>
+        <span class="sync-line">${syncInfoHtml(rows.length)}</span>
         ${sortSelectHtml('home-note-sort', NOTE_SORT_LABELS, homeNoteSort)}
       </div>
       <div id="note-cards"></div>
