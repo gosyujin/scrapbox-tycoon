@@ -89,6 +89,11 @@ function getCaretCoordinates(ta: HTMLTextAreaElement, position: number): { top: 
   return { top, left, height: lineHeight };
 }
 
+// Matches the `@media (max-width: 480px)` phone layout in style.css.
+function isPhoneLayout(): boolean {
+  return window.matchMedia('(max-width: 480px)').matches;
+}
+
 // Character offset -> {line, col} and back, against an arbitrary \n-joined
 // string/line array (not tied to a particular Editor instance) -- used by
 // the line-move and indent/outdent keyboard commands below to translate a
@@ -181,6 +186,7 @@ export class Editor {
   private selStart: number | null = null;
   private selEnd: number | null = null;
   private readonly boundUpdateToolbar = () => this.updateSelectionToolbar();
+  private readonly boundRevealCaret = () => this.revealCaret();
   private readonly boundEnterEditKey = (e: KeyboardEvent) => this.handleGlobalKeydown(e);
 
   constructor({ container, lines, onChange, knownTitles, fallback, onExtractPage }: EditorOptions) {
@@ -365,11 +371,43 @@ export class Editor {
     ta.focus({ preventScroll: true });
     const pos = caretOffset === null ? ta.value.length : Math.max(0, Math.min(caretOffset, ta.value.length));
     ta.setSelectionRange(pos, pos);
+
+    // Phone layout only: the on-screen keyboard shrinks the *visual*
+    // viewport (not the layout viewport) after focus, so a caret that was
+    // visible a moment ago -- or that sits at the end of a long page --
+    // can end up hidden behind it. Re-check whenever that viewport
+    // resizes, and as the user types.
+    if (isPhoneLayout()) {
+      window.visualViewport?.addEventListener('resize', this.boundRevealCaret);
+      ta.addEventListener('input', this.boundRevealCaret);
+      requestAnimationFrame(this.boundRevealCaret);
+    }
+  }
+
+  // Scrolls the page just enough to keep the caret inside the visual
+  // viewport (i.e. above the keyboard when it is showing).
+  private revealCaret(): void {
+    const ta = this.textarea;
+    if (!ta) return;
+    const vv = window.visualViewport;
+    const viewTop = vv ? vv.offsetTop : 0;
+    const viewHeight = vv ? vv.height : window.innerHeight;
+    const caret = getCaretCoordinates(ta, ta.selectionEnd);
+    const caretTop = ta.getBoundingClientRect().top + caret.top - ta.scrollTop;
+    const caretBottom = caretTop + caret.height;
+    const margin = 24;
+    if (caretBottom + margin > viewTop + viewHeight) {
+      window.scrollBy(0, caretBottom + margin - (viewTop + viewHeight));
+    } else if (caretTop - margin < viewTop) {
+      window.scrollBy(0, caretTop - margin - viewTop);
+    }
   }
 
   private commit(): void {
     const ta = this.textarea;
     if (!ta) return;
+    window.visualViewport?.removeEventListener('resize', this.boundRevealCaret);
+    ta.removeEventListener('input', this.boundRevealCaret);
     document.removeEventListener('selectionchange', this.boundUpdateToolbar);
     window.removeEventListener('scroll', this.boundUpdateToolbar, true);
     this.hideSelectionToolbar();
