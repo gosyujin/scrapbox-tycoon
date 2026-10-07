@@ -35,6 +35,17 @@ const AUTO_SYNC_DEBOUNCE_MS = 4000;
 // transient failure recovers even during a lull in editing.
 const RETRY_AFTER_FAILURE_MS = 15000;
 
+// Title suffix of the page stashConflictIfDiverged() creates. app.ts keys its
+// "conflict" banner (as opposed to the plain rename-collision one) off this.
+export const SYNC_CONFLICT_SUFFIX = ' (sync conflict)';
+export function isSyncConflictTitle(title: string): boolean {
+  return /\(sync conflict\)(_\d+)?$/.test(title);
+}
+
+function sameLines(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((line, i) => line === b[i]);
+}
+
 interface SyncMeta {
   dirty: string[];
   deleted: string[];
@@ -47,6 +58,13 @@ interface SyncMeta {
   // conflict copy stashed on every retry's pull(), since the divergence
   // that triggered it is still there until our push actually lands.
   conflictSeen: Record<string, number>;
+  // title -> the `updated` value of the page content we were about to hand to
+  // pushBatch(), written BEFORE the network call and cleared once it's
+  // acknowledged. If the commit lands on GitHub but we never hear back (iOS
+  // freezing the PWA right after the PATCH, a dropped connection, ...), this
+  // is the only record that the remote's new `updated` is OUR OWN write, not
+  // another device's -- see pull().
+  pendingPush: Record<string, number>;
   // Persisted (not just kept on the instance) so the debug display in the
   // page list still shows the last-known-good commit across a reload,
   // before this device has synced again.
@@ -61,10 +79,11 @@ function readMeta(): SyncMeta {
       deleted: Array.isArray(raw.deleted) ? raw.deleted : [],
       lastSyncedUpdated: raw.lastSyncedUpdated && typeof raw.lastSyncedUpdated === 'object' ? raw.lastSyncedUpdated : {},
       conflictSeen: raw.conflictSeen && typeof raw.conflictSeen === 'object' ? raw.conflictSeen : {},
+      pendingPush: raw.pendingPush && typeof raw.pendingPush === 'object' ? raw.pendingPush : {},
       lastSyncedCommitSha: typeof raw.lastSyncedCommitSha === 'string' ? raw.lastSyncedCommitSha : null,
     };
   } catch {
-    return { dirty: [], deleted: [], lastSyncedUpdated: {}, conflictSeen: {}, lastSyncedCommitSha: null };
+    return { dirty: [], deleted: [], lastSyncedUpdated: {}, conflictSeen: {}, pendingPush: {}, lastSyncedCommitSha: null };
   }
 }
 
@@ -308,9 +327,25 @@ export class GitHubSyncStore implements Store, SyncCapable {
     const knownRemoteUpdated = this.meta.lastSyncedUpdated[title];
     if (knownRemoteUpdated === undefined || knownRemoteUpdated === remoteUpdated) return;
     if (this.meta.conflictSeen[title] === remoteUpdated) return; // already stashed this exact divergence
+    // The remote's `updated` is exactly what we were mid-way through pushing:
+    // that commit landed but its acknowledgement never reached us (see
+    // SyncMeta.pendingPush). It's our own write, not a divergence.
+    if (this.meta.pendingPush[title] === remoteUpdated) {
+      this.meta.lastSyncedUpdated[title] = remoteUpdated;
+      delete this.meta.pendingPush[title];
+      return;
+    }
     const remotePage = await this.remote.getPage(title);
     if (!remotePage) return;
-    const conflictTitle = await this.uniqueConflictTitle(`${title} (sync conflict)`);
+    // Belt and braces for the case above when pendingPush wasn't available
+    // (e.g. meta written by an older build): identical content is never a
+    // conflict, whatever its timestamp says.
+    const localPage = await this.local.getPage(title);
+    if (localPage && sameLines(localPage.lines, remotePage.lines)) {
+      this.meta.lastSyncedUpdated[title] = remoteUpdated;
+      return;
+    }
+    const conflictTitle = await this.uniqueConflictTitle(`${title}${SYNC_CONFLICT_SUFFIX}`);
     await this.local.savePage({
       title: conflictTitle,
       lines: remotePage.lines,
@@ -389,9 +424,15 @@ export class GitHubSyncStore implements Store, SyncCapable {
     }
     if (changes.length === 0) return;
 
+    for (const change of changes) {
+      if (change.lines !== null && change.updated !== undefined) this.meta.pendingPush[change.title] = change.updated;
+    }
+    writeMeta(this.meta);
+
     await this.remote.pushBatch(changes, `sync: ${changes.length} page(s)`);
 
     for (const change of changes) {
+      delete this.meta.pendingPush[change.title];
       if (change.lines === null) {
         delete this.meta.lastSyncedUpdated[change.title];
       } else {

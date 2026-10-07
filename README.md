@@ -254,6 +254,41 @@ GitHub 上の [`8994df4`](https://github.com/gosyujin/scrapbox-tycoon-notes/comm
 そのコミットの `pages/scrapbox-tycoon-notesテスト.json` を見て該当行を
 ページに書き戻す。
 
+### 8. 自分自身の push が「(sync conflict)」として別ページになる問題
+
+**報告:** スマホ操作のみのはずなのにコンフリクトが発生した。実リポジトリの
+`心療内科 (sync conflict).json` を元ページ `心療内科.json` と比べると、
+`lines`/`created`/`updated` が**完全一致**していた (=別端末の編集ではない)。
+
+**根本原因:** 7. の競合判定は「ローカルが dirty かつ remote の `updated` ≠
+`lastSyncedUpdated`」だけで成立する。一方 `lastSyncedUpdated` は
+`pushBatch()` の**レスポンスを受け取った後**にしか更新されない。push の
+コミットが GitHub に着地したのに応答が届かない場合 (iOS が PATCH 直後に PWA を
+凍結/終了、モバイル回線の切断、リトライ上限到達) は dirty のまま・
+`lastSyncedUpdated` は古いままになり、次回 `pull()` が自分の書き込みを
+「別端末の変更」と誤認していた。
+
+**修正 (`github-sync-store.ts`):**
+1. `push()` が `pushBatch()` を呼ぶ**前**に `meta.pendingPush[title] = updated`
+   を localStorage へ永続化し、確認応答後に消す。`stashConflictIfDiverged()` は
+   remote の `updated` が `pendingPush` と一致したら自分の書き込みとして
+   `lastSyncedUpdated` を進めるだけで stash しない。
+2. 保険として、remote ページを取得した後にローカルと `lines` を比較し、同一内容
+   なら競合扱いにしない (`pendingPush` を持たない旧 meta でも誤判定しない)。
+
+**それでも本物の競合が起きた場合の UI (`app.ts`):** `(sync conflict)` ページには
+通常の「同名ページ」バナーより目立つ競合専用バナーを出し、元ページとの行単位
+diff (`src/diff.ts`) の結果を「一致 / 不一致 (N 行の違い)」で表示、「違いを見る」
+で +/- の差分を展開できる。一致なら「このコピーを削除」を主ボタンにし、統合
+ボタンは出さない (同内容を統合すると全行が重複するため)。
+
+回帰テスト: `test/sync-own-push-not-conflict.test.mjs` (mock に「PATCH は適用
+されるが 500 を返す」`setLostAckOnRefUpdate` を追加。修正を外すと両ケースとも
+fail することを確認済み)、`test/diff.test.mjs`。
+
+**既存データへの非遡及:** 既にできた `心療内科 (sync conflict)` は自動では消えない。
+ページを開くと「一致」と表示されるので「このコピーを削除」で消す。
+
 ## 開発
 
 ```bash

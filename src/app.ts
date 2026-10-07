@@ -1,5 +1,6 @@
 import { LocalStore } from './store/local-store.js';
-import { GitHubSyncStore } from './store/github-sync-store.js';
+import { GitHubSyncStore, isSyncConflictTitle } from './store/github-sync-store.js';
+import { diffLines, isIdentical } from './diff.js';
 import { Editor } from './editor.js';
 import { extractLinks, renderLinesInto } from './parser.js';
 import { parseScrapboxExport, buildScrapboxExport } from './scrapbox-format.js';
@@ -739,13 +740,40 @@ async function renderPage(title: string): Promise<void> {
   const page: Page = existing || { title, lines: [title], created: 0, updated: 0 };
   if (!isNew) noteVisits.recordVisit(title);
 
-  const mergeBanner = page.mergeCandidate
-    ? `<div class="merge-banner">
+  // A "(sync conflict)" copy (made by GitHubSyncStore when another device
+  // really did change the same page) gets its own, louder banner than the
+  // rename-collision one, plus a line diff against the original so the user
+  // can see what actually differs -- or that nothing does.
+  const isConflict = !!page.mergeCandidate && isSyncConflictTitle(title);
+  const conflictTarget = isConflict ? await store.getPage(page.mergeCandidate!) : null;
+  // First line is the page title, which is not meant to be compared (a
+  // collision copy's differs by construction).
+  const conflictDiff = conflictTarget ? diffLines(conflictTarget.lines.slice(1), page.lines.slice(1)) : null;
+  const conflictIdentical = conflictDiff ? isIdentical(conflictDiff) : false;
+
+  let mergeBanner = '';
+  if (page.mergeCandidate && isConflict) {
+    const target = escapeHtml(page.mergeCandidate);
+    const result = !conflictDiff
+      ? `元ページ "${target}" が見つかりません。`
+      : conflictIdentical
+        ? `<strong class="conflict-result same">一致</strong> — "${target}" と内容は同じです。このコピーは不要です。`
+        : `<strong class="conflict-result differ">不一致</strong> — "${target}" と ${conflictDiff.filter((o) => o.kind !== 'same').length} 行の違いがあります。`;
+    mergeBanner = `<div class="merge-banner conflict-banner">
+         <span>同期の競合: 別の端末で変更された "${target}" の内容が別ページとして保存されています。<br>${result}</span>
+         ${conflictDiff ? '<button id="conflict-compare" class="secondary">違いを見る</button>' : ''}
+         ${conflictIdentical ? '' : '<button id="merge-now">元ページに統合する</button>'}
+         <button id="conflict-discard" class="${conflictIdentical ? '' : 'secondary'}">このコピーを削除</button>
+         <button id="merge-dismiss" class="secondary">通常のページとして残す</button>
+         <pre id="conflict-diff" class="conflict-diff" hidden></pre>
+       </div>`;
+  } else if (page.mergeCandidate) {
+    mergeBanner = `<div class="merge-banner">
          <span>"${escapeHtml(page.mergeCandidate)}" と同じタイトルになったため別ページとして保存されています。</span>
          <button id="merge-now">統合する</button>
          <button id="merge-dismiss" class="secondary">この提案を消す</button>
-       </div>`
-    : '';
+       </div>`;
+  }
 
   // Notes and the reference project are separate namespaces (see the
   // fallback comment on Editor's knownTitles below), so having the same
@@ -781,7 +809,7 @@ async function renderPage(title: string): Promise<void> {
 
   if (page.mergeCandidate) {
     const targetTitle = page.mergeCandidate;
-    document.getElementById('merge-now')!.addEventListener('click', async () => {
+    document.getElementById('merge-now')?.addEventListener('click', async () => {
       const target = await store.getPage(targetTitle);
       if (target) {
         const separator = target.lines[target.lines.length - 1] === '' ? [] : [''];
@@ -794,6 +822,25 @@ async function renderPage(title: string): Promise<void> {
         await store.savePage({ title, lines: page.lines, mergeCandidate: null });
         await renderPage(title);
       }
+    });
+    if (conflictDiff) {
+      const pre = document.getElementById('conflict-diff')!;
+      pre.append(
+        ...conflictDiff.map((op) => {
+          const line = document.createElement('span');
+          line.className = `diff-${op.kind}`;
+          line.textContent = `${op.kind === 'added' ? '+ ' : op.kind === 'removed' ? '- ' : '  '}${op.text}`;
+          return line;
+        })
+      );
+      document.getElementById('conflict-compare')!.addEventListener('click', () => {
+        pre.hidden = !pre.hidden;
+      });
+    }
+    document.getElementById('conflict-discard')?.addEventListener('click', async () => {
+      if (!conflictIdentical && !confirm('このコピーにしかない内容は失われます。削除しますか？')) return;
+      await store.deletePage(title);
+      navigate(`#/page/${encodeURIComponent(targetTitle)}`);
     });
     document.getElementById('merge-dismiss')!.addEventListener('click', async () => {
       await store.savePage({ title, lines: page.lines, mergeCandidate: null });

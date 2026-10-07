@@ -36,6 +36,12 @@ export function installMockGitHubApi({ delayMs = 100 } = {}) {
     });
   }
 
+  // While true, a ref PATCH is still APPLIED (the commit really lands) but the
+  // response is a 500 -- the client sees a failure for a write that actually
+  // succeeded, like a dropped connection or an iOS-suspended PWA right after
+  // the PATCH went out.
+  let lostAckOnRefUpdate = false;
+
   function delay() {
     return new Promise((r) => setTimeout(r, delayMs));
   }
@@ -99,6 +105,7 @@ export function installMockGitHubApi({ delayMs = 100 } = {}) {
         return new Response(JSON.stringify({ message: 'not a fast forward' }), { status: 422 });
       }
       refSha = body.sha;
+      if (lostAckOnRefUpdate) return new Response('upstream connection lost', { status: 500 });
       return json200({ ok: true });
     }
     throw new Error(`mock GitHub API: unhandled ${method} ${path}`);
@@ -108,6 +115,9 @@ export function installMockGitHubApi({ delayMs = 100 } = {}) {
 
   return {
     armTreesPostedSignal,
+    setLostAckOnRefUpdate(v) {
+      lostAckOnRefUpdate = v;
+    },
     currentRemoteState() {
       const files = treeFiles.get(commitTree.get(refSha));
       const index = files.get('pages/_index.json');

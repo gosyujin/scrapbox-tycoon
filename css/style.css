@@ -823,3 +823,26 @@ blockquote.sb-quote {
   color: var(--muted);
   border-color: var(--border);
 }
+
+/* Sync-conflict variant of the merge banner: louder border, plus the line
+   diff vs the original page. */
+.conflict-banner { border-color: var(--link-missing); }
+.conflict-result.same { color: var(--link-external); }
+.conflict-result.differ { color: var(--link-missing); }
+.conflict-diff {
+  flex: 1 1 100%;
+  max-height: 50vh;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.conflict-diff[hidden] { display: none; }
+.conflict-diff .diff-added { display: block; background: rgba(26, 127, 55, 0.18); }
+.conflict-diff .diff-removed { display: block; background: rgba(178, 59, 59, 0.18); }
+.conflict-diff .diff-same { display: block; color: var(--muted); }
