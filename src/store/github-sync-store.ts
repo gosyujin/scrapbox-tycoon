@@ -348,7 +348,12 @@ export class GitHubSyncStore implements Store, SyncCapable {
     const conflictTitle = await this.uniqueConflictTitle(`${title}${SYNC_CONFLICT_SUFFIX}`);
     await this.local.savePage({
       title: conflictTitle,
-      lines: remotePage.lines,
+      // lines[0] is the page's identity (Editor/app.ts treat a title !=
+      // lines[0] as a rename on the next edit). Keeping the original's
+      // first line here made any edit to the copy "rename" it back to the
+      // original title, collide, and get re-saved as "<title>_2" -- no
+      // longer a sync-conflict page at all.
+      lines: [conflictTitle, ...remotePage.lines.slice(1)],
       created: remotePage.created,
       updated: remotePage.updated,
       mergeCandidate: title,

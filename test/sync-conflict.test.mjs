@@ -70,7 +70,9 @@ test('a genuine concurrent edit to the same page is stashed as a mergeCandidate 
   const stashed = await pc.getPage(stashedTitle);
   assert.ok(stashed, 'expected the phone edit to be stashed as a separate page');
   assert.equal(stashed.mergeCandidate, 'Notes');
-  assert.deepEqual(stashed.lines, ['Notes', 'v0', 'added on phone']);
+  // lines[0] must equal the page's own title, else the first edit to the
+  // copy would be treated as a rename (see stashConflictIfDiverged).
+  assert.deepEqual(stashed.lines, [stashedTitle, 'v0', 'added on phone']);
 
   // It must have been pushed to the remote too, not just kept on this one
   // device -- otherwise it would vanish the moment this device's

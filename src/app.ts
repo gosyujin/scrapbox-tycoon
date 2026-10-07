@@ -798,6 +798,7 @@ async function renderPage(title: string): Promise<void> {
           : ''
       }
       <div id="editor"></div>
+      ${isNew ? '' : '<p class="page-actions"><button id="delete-page" class="danger">このページを削除</button></p>'}
       <section class="linked">
         <h3 id="linked-heading">リンク</h3>
         <div id="backlinks">読み込み中...</div>
@@ -864,6 +865,17 @@ async function renderPage(title: string): Promise<void> {
   // about.
   let currentTitle = title;
   let existsLocally = !isNew;
+  // Set by the delete button so a late editor commit (blur while the page is
+  // being torn down) can't save the page straight back.
+  let pageDeleted = false;
+
+  document.getElementById('delete-page')?.addEventListener('mousedown', (e) => e.preventDefault()); // don't blur (=commit) the editor first
+  document.getElementById('delete-page')?.addEventListener('click', async () => {
+    if (!confirm(`"${currentTitle}" を削除しますか？この操作は元に戻せません。`)) return;
+    pageDeleted = true;
+    await store.deletePage(currentTitle);
+    navigate('#/');
+  });
 
   const knownTitles = new Set((await store.listPages()).map((p) => p.title.toLowerCase()));
 
@@ -881,6 +893,7 @@ async function renderPage(title: string): Promise<void> {
       }
     },
     onChange: async (lines) => {
+      if (pageDeleted) return;
       let newTitle = lines[0];
       let mergeCandidate: string | undefined;
 
@@ -922,6 +935,9 @@ async function renderPage(title: string): Promise<void> {
         return;
       }
       existsLocally = true;
+      // The conflict banner's 一致/不一致 result was computed at render time,
+      // so it would go stale the moment the user edits this copy.
+      if (isConflict) await renderPage(newTitle);
     },
   });
 

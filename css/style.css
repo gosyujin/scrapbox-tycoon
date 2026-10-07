@@ -846,3 +846,14 @@ blockquote.sb-quote {
 .conflict-diff .diff-added { display: block; background: rgba(26, 127, 55, 0.18); }
 .conflict-diff .diff-removed { display: block; background: rgba(178, 59, 59, 0.18); }
 .conflict-diff .diff-same { display: block; color: var(--muted); }
+
+.page-actions { margin: 16px 0 0; text-align: right; }
+.page-actions button.danger {
+  padding: 5px 12px;
+  border-radius: 5px;
+  border: 1px solid var(--link-missing);
+  background: transparent;
+  color: var(--link-missing);
+  font-size: 13px;
+  cursor: pointer;
+}
