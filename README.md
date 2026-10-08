@@ -8,6 +8,23 @@ GitHub リポジトリ (`gosyujin/scrapbox-tycoon-notes`) にまとめてコミ�
 このファイルは実装の詳細な API ドキュメントではなく、**なぜ今の形になっているか**
 を残すためのもの。次のセッションを始める前に一読すること。
 
+## 機能
+
+- Scrapbox 記法のページ編集 (テキストエリアベースのエディタ)、ページ一覧のカード表示
+- ローカルファースト保存 (localStorage) と GitHub へのバックグラウンド同期
+- 同期ステータス履歴のコピー (デバッグ用)
+- 同期競合の退避 (「(sync conflict)」ページ) と競合バナー・行単位 diff
+- 実 Scrapbox プロジェクトの export JSON を参照専用で読み込み
+
+## ドキュメント
+
+- [docs/features.md](docs/features.md) — 機能の詳細
+- [docs/architecture.md](docs/architecture.md) — 構成・コンポーネント
+- [docs/technical-notes.md](docs/technical-notes.md) — 技術的な注意点・変更禁止の不変条件
+- [docs/troubleshooting.md](docs/troubleshooting.md) — 復旧手順
+- [docs/decisions/](docs/decisions/) — 調査・意思決定の経緯
+- [CHANGELOG.md](CHANGELOG.md) — 変更履歴
+
 ## アーキテクチャ概要
 
 - `src/store/local-store.ts` — localStorage 上の `Store` 実装。トークン不要の
