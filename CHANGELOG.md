@@ -2,6 +2,7 @@
 
 1エントリ1〜3行。経緯のあるものは `docs/decisions/` にリンクする。コミットは新しい順。
 
+- 2026-10-09 Added: ファビコン / apple-touch-icon / PWA アイコンを追加 (`icons/`、deploy workflow にも `cp -r icons` を追加)。
 - 2026-10-07 (`5d4ed64`) Changed/Added: 競合コピー (sync conflict) を編集しても `_N` にならないよう stash 時に `lines[0]` を書き換え、「このページを削除」ボタンを追加。 → [decisions/08](docs/decisions/08-own-push-treated-as-conflict.md)
 - 2026-10-07 (`6132a11`) Fixed/Added: 応答が届かなかった自分の push を「(sync conflict)」と誤認する問題を修正 (`meta.pendingPush`)、競合専用バナーと行単位 diff を追加。 → [decisions/08](docs/decisions/08-own-push-treated-as-conflict.md)
 - 2026-09-26 (`927f121`) Fixed: 2台で同じページを編集すると片方が無言で消える問題を、競合を「(sync conflict)」ページに退避して修正。 → [decisions/07](docs/decisions/07-concurrent-edit-silently-lost.md)

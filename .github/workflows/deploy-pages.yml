@@ -32,6 +32,7 @@ jobs:
           cp index.html dist/
           cp -r css dist/
           cp -r js dist/
+          cp -r icons dist/
           cp build-info.json dist/
           cp sw.js dist/
           cp manifest.json dist/
