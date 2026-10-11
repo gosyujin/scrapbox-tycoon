@@ -2,6 +2,7 @@
 
 1エントリ1〜3行。経緯のあるものは `docs/decisions/` にリンクする。コミットは新しい順。
 
+- 2026-10-11 Changed: 追加ボタンと検索フォームを画面下のフッターに固定 (gyazo-tycoon-viewer と同レイアウト、キーボード追従あり)。 → [features](docs/features.md)
 - 2026-10-09 Added: ファビコン / apple-touch-icon / PWA アイコンを追加 (`icons/`、deploy workflow にも `cp -r icons` を追加)。
 - 2026-10-07 (`5d4ed64`) Changed/Added: 競合コピー (sync conflict) を編集しても `_N` にならないよう stash 時に `lines[0]` を書き換え、「このページを削除」ボタンを追加。 → [decisions/08](docs/decisions/08-own-push-treated-as-conflict.md)
 - 2026-10-07 (`6132a11`) Fixed/Added: 応答が届かなかった自分の push を「(sync conflict)」と誤認する問題を修正 (`meta.pendingPush`)、競合専用バナーと行単位 diff を追加。 → [decisions/08](docs/decisions/08-own-push-treated-as-conflict.md)

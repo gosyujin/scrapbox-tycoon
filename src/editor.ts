@@ -391,7 +391,10 @@ export class Editor {
     if (!ta) return;
     const vv = window.visualViewport;
     const viewTop = vv ? vv.offsetTop : 0;
-    const viewHeight = vv ? vv.height : window.innerHeight;
+    // The search footer rides on top of the keyboard (see trackKeyboardInset
+    // in app.ts), so it eats the bottom of the visible area too.
+    const footerHeight = document.querySelector<HTMLElement>('.bottombar')?.offsetHeight ?? 0;
+    const viewHeight = (vv ? vv.height : window.innerHeight) - footerHeight;
     const caret = getCaretCoordinates(ta, ta.selectionEnd);
     const caretTop = ta.getBoundingClientRect().top + caret.top - ta.scrollTop;
     const caretBottom = caretTop + caret.height;

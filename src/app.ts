@@ -258,10 +258,21 @@ window.addEventListener('hashchange', () => {
   void route();
 });
 
+// The quick-open row (+ button and search box) is a fixed footer, not part
+// of the topbar -- same layout as gyazo-tycoon-viewer's #sbar. position:
+// fixed means its place in this markup doesn't matter, and it's rebuilt
+// with the rest of #app on every render like the topbar always was.
 function topBar(hasRef: boolean): string {
   return `
     <div class="topbar">
       <a href="#/" class="brand">scrapbox-tycoon</a>
+      <nav>
+        ${hasRef ? '<a href="#/ref" title="参照一覧" aria-label="参照一覧">📖</a>' : ''}
+        <button id="random-btn" class="nav-btn" type="button" title="ランダム" aria-label="ランダム">🔀</button>
+        <a href="#/settings" title="設定" aria-label="設定">⚙️</a>
+      </nav>
+    </div>
+    <div class="bottombar">
       <div class="quick-open-row">
         <button id="quick-add" class="quick-add" title="ページを追加" aria-label="ページを追加">+</button>
         <div class="quick-open-wrap">
@@ -269,13 +280,25 @@ function topBar(hasRef: boolean): string {
           <div id="quick-open-dropdown" class="quick-open-dropdown" hidden></div>
         </div>
       </div>
-      <nav>
-        ${hasRef ? '<a href="#/ref" title="参照一覧" aria-label="参照一覧">📖</a>' : ''}
-        <button id="random-btn" class="nav-btn" type="button" title="ランダム" aria-label="ランダム">🔀</button>
-        <a href="#/settings" title="設定" aria-label="設定">⚙️</a>
-      </nav>
     </div>`;
 }
+
+// iOS shrinks only the visual viewport when the keyboard opens, so a
+// position:fixed footer stays at the layout viewport's bottom -- i.e.
+// hidden behind the keyboard. Publish the covered height as --kb
+// (.bottombar translates up by it). A CSS variable rather than a style
+// on the element itself, because the footer is replaced on every render.
+function trackKeyboardInset(): void {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const fit = (): void => {
+    const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty('--kb', `${covered}px`);
+  };
+  vv.addEventListener('resize', fit);
+  vv.addEventListener('scroll', fit);
+}
+trackKeyboardInset();
 
 // Picks a random page from the reference project and jumps straight to it
 // -- ported from scrapbox-pwa-viewer's random-page button, which this
@@ -707,7 +730,7 @@ async function renderPageList(query = ''): Promise<void> {
     document.getElementById('note-cards')!,
     rows,
     '#/page/',
-    query ? '一致するページがありません。' : 'まだページがありません。上の入力欄から作成してください。'
+    query ? '一致するページがありません。' : 'まだページがありません。下の入力欄から作成してください。'
   );
   if (refMeta) {
     mountInfiniteCards(document.getElementById('home-ref-cards')!, refSummaries, '#/ref/', '一致するページがありません。');

@@ -11,6 +11,7 @@ GitHub リポジトリ (`gosyujin/scrapbox-tycoon-notes`) にまとめてコミ�
 - ローカルファースト保存 (localStorage) と GitHub へのバックグラウンド同期
 - 同期ステータス履歴のコピー (デバッグ用)
 - 同期競合の退避 (「(sync conflict)」ページ) と競合バナー・行単位 diff
+- 追加ボタンと検索フォームを画面下のフッターに固定 (gyazo-tycoon-viewer と同じレイアウト)
 - 実 Scrapbox プロジェクトの export JSON を参照専用で読み込み
 
 ## ドキュメント

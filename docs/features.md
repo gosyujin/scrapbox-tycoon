@@ -9,6 +9,9 @@
 `.topbar nav { margin-left: auto; }` を追加し、幅に関わらずアイコン群自体を
 行の右端に押し出す形にした。
 
+> 後続の「9. 追加ボタン・検索フォームのフッター化」で `quick-open-row` は
+> ヘッダーから外れた。`nav` の `margin-left: auto` はそのまま有効。
+
 ## 3. 同期ステータス履歴のコピー機能 (`e26e462`)
 
 上記の調査で、「同期中のまま止まった」のようなユーザー体験を後から正確に
@@ -50,3 +53,19 @@ diff (`src/diff.ts`) の結果を「一致 / 不一致 (N 行の違い)」で表
 mousedown の preventDefault でエディタの blur=commit を先に走らせず、削除後に
 遅れて届く `onChange` はフラグで無視する (削除直後にページが復活しないように)。
 
+## 9. 追加ボタン・検索フォームを画面下のフッターに固定
+
+gyazo-tycoon-viewer の `#sbar` と同じ構成に揃えた (hateb-tycoon / gyazo-tycoon
+のスマホ版にも同じ指示を出している)。ヘッダーはブランド名 + アイコン群の
+1 行だけになり、「+」ボタンと検索ボックス (`.quick-open-row`) は
+`.bottombar` (`position: fixed; bottom: 0`) に入る。
+
+- フッター高は `--footer-h` で固定 (51px + `env(safe-area-inset-bottom)`)。同期ステータス
+  (`.status-bar`) と `.content` の下余白はこの値の分だけ持ち上げて重ならないようにする。
+- iOS はキーボード表示時に visual viewport だけが縮み、fixed 要素がキーボードの
+  下に隠れる。`trackKeyboardInset()` (`app.ts`) が覆われた高さを `--kb` に入れ、
+  `.bottombar` が `translateY` で持ち上がる。フッターは毎回の render で作り直される
+  ので、要素ではなく CSS 変数に持たせている。
+- 検索ドロップダウンは上向きに開く。900px 以上では検索欄を最大 640px の中央寄せ。
+- `editor.ts` の `revealCaret()` はフッターの高さ分を可視領域から引く
+  (キャレットがキーボードの上に載ったフッターの裏に隠れないように)。
