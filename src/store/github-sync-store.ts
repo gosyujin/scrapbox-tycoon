@@ -69,6 +69,12 @@ interface SyncMeta {
   // page list still shows the last-known-good commit across a reload,
   // before this device has synced again.
   lastSyncedCommitSha: string | null;
+  // Branch HEAD as read right BEFORE the last successful pull(). If HEAD is
+  // still this and nothing is dirty, there is nothing new to fetch, so a
+  // background poll costs one ref read instead of the full pull. Kept apart
+  // from lastSyncedCommitSha (a display value read AFTER push, which can
+  // include a commit by another device that this device never pulled).
+  lastPulledHeadSha: string | null;
 }
 
 function readMeta(): SyncMeta {
@@ -81,9 +87,10 @@ function readMeta(): SyncMeta {
       conflictSeen: raw.conflictSeen && typeof raw.conflictSeen === 'object' ? raw.conflictSeen : {},
       pendingPush: raw.pendingPush && typeof raw.pendingPush === 'object' ? raw.pendingPush : {},
       lastSyncedCommitSha: typeof raw.lastSyncedCommitSha === 'string' ? raw.lastSyncedCommitSha : null,
+      lastPulledHeadSha: typeof raw.lastPulledHeadSha === 'string' ? raw.lastPulledHeadSha : null,
     };
   } catch {
-    return { dirty: [], deleted: [], lastSyncedUpdated: {}, conflictSeen: {}, pendingPush: {}, lastSyncedCommitSha: null };
+    return { dirty: [], deleted: [], lastSyncedUpdated: {}, conflictSeen: {}, pendingPush: {}, lastSyncedCommitSha: null, lastPulledHeadSha: null };
   }
 }
 
@@ -144,6 +151,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
       lastSyncedAt: null,
       lastSyncedCommitSha: this.meta.lastSyncedCommitSha,
       lastError: null,
+      dataVersion: 0,
     };
     // Pick up any changes made on other devices since we were last open.
     this.scheduleSync(0);
@@ -158,9 +166,25 @@ export class GitHubSyncStore implements Store, SyncCapable {
   }
 
   async savePage(page: PageInput): Promise<void> {
+    // The editor commits on every blur, including a blur after merely
+    // opening a page. Writing that would bump `updated` and mark the page
+    // dirty without any change, so a later edit of the same page on another
+    // device looks like a divergence on the next pull() and produces a
+    // "(sync conflict)" copy for what was just a look at the page.
+    if (await this.isNoopSave(page)) return;
     await this.local.savePage(page);
     this.markDirty(page.title);
     this.scheduleSync();
+  }
+
+  private async isNoopSave(page: PageInput): Promise<boolean> {
+    const existing = await this.local.getPage(page.title);
+    if (!existing || !sameLines(existing.lines, page.lines)) return false;
+    if (page.created !== undefined && page.created !== existing.created) return false;
+    if (page.updated !== undefined && page.updated !== existing.updated) return false;
+    // mergeCandidate: undefined = keep, null = clear, string = set.
+    if (page.mergeCandidate === null) return existing.mergeCandidate === undefined;
+    return page.mergeCandidate === undefined || page.mergeCandidate === existing.mergeCandidate;
   }
 
   async deletePage(title: string): Promise<void> {
@@ -283,8 +307,14 @@ export class GitHubSyncStore implements Store, SyncCapable {
     clearTimeout(this.debounceTimer);
     this.setStatus({ state: 'syncing' });
     try {
-      await this.pull();
-      await this.push();
+      const headBefore = await this.remote.getHeadCommitSha();
+      const hasLocalChanges = this.meta.dirty.length > 0 || this.meta.deleted.length > 0;
+      let changedLocal = false;
+      if (hasLocalChanges || headBefore !== this.meta.lastPulledHeadSha) {
+        changedLocal = await this.pull();
+        this.meta.lastPulledHeadSha = headBefore;
+        await this.push();
+      }
       // Read HEAD fresh rather than reusing whatever pull()/push() last saw:
       // a pull-only sync (nothing local to push) still lands on whatever
       // another device most recently committed, and this is purely a
@@ -300,6 +330,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
         lastSyncedAt: Math.floor(Date.now() / 1000),
         lastSyncedCommitSha: this.meta.lastSyncedCommitSha,
         lastError: null,
+        dataVersion: this.status.dataVersion + (changedLocal ? 1 : 0),
       });
     } catch (err) {
       writeMeta(this.meta);
@@ -323,27 +354,27 @@ export class GitHubSyncStore implements Store, SyncCapable {
   // a separate page tagged with mergeCandidate pointing back at the real
   // title, so the existing rename-collision banner (see app.ts) lets the
   // user merge it in whenever they notice.
-  private async stashConflictIfDiverged(title: string, remoteUpdated: number): Promise<void> {
+  private async stashConflictIfDiverged(title: string, remoteUpdated: number): Promise<boolean> {
     const knownRemoteUpdated = this.meta.lastSyncedUpdated[title];
-    if (knownRemoteUpdated === undefined || knownRemoteUpdated === remoteUpdated) return;
-    if (this.meta.conflictSeen[title] === remoteUpdated) return; // already stashed this exact divergence
+    if (knownRemoteUpdated === undefined || knownRemoteUpdated === remoteUpdated) return false;
+    if (this.meta.conflictSeen[title] === remoteUpdated) return false; // already stashed this exact divergence
     // The remote's `updated` is exactly what we were mid-way through pushing:
     // that commit landed but its acknowledgement never reached us (see
     // SyncMeta.pendingPush). It's our own write, not a divergence.
     if (this.meta.pendingPush[title] === remoteUpdated) {
       this.meta.lastSyncedUpdated[title] = remoteUpdated;
       delete this.meta.pendingPush[title];
-      return;
+      return false;
     }
     const remotePage = await this.remote.getPage(title);
-    if (!remotePage) return;
+    if (!remotePage) return false;
     // Belt and braces for the case above when pendingPush wasn't available
     // (e.g. meta written by an older build): identical content is never a
     // conflict, whatever its timestamp says.
     const localPage = await this.local.getPage(title);
     if (localPage && sameLines(localPage.lines, remotePage.lines)) {
       this.meta.lastSyncedUpdated[title] = remoteUpdated;
-      return;
+      return false;
     }
     const conflictTitle = await this.uniqueConflictTitle(`${title}${SYNC_CONFLICT_SUFFIX}`);
     await this.local.savePage({
@@ -360,6 +391,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
     });
     this.markDirty(conflictTitle); // so this same sync's push() also lands it on the remote
     this.meta.conflictSeen[title] = remoteUpdated;
+    return true;
   }
 
   private async uniqueConflictTitle(base: string): Promise<string> {
@@ -369,7 +401,10 @@ export class GitHubSyncStore implements Store, SyncCapable {
     return `${base}_${n}`;
   }
 
-  private async pull(): Promise<void> {
+  // Returns whether this changed anything in the local store (so the UI knows
+  // a re-render is worth it).
+  private async pull(): Promise<boolean> {
+    let changed = false;
     const remoteEntries = await this.remote.listPages();
 
     for (const entry of remoteEntries) {
@@ -380,7 +415,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
       // later here could overwrite that brand-new local edit before it's
       // ever pushed.
       if (this.meta.dirty.includes(entry.title)) {
-        await this.stashConflictIfDiverged(entry.title, entry.updated);
+        if (await this.stashConflictIfDiverged(entry.title, entry.updated)) changed = true;
         continue; // our local edit still wins on push for this title
       }
       if (this.meta.lastSyncedUpdated[entry.title] === entry.updated) continue; // unchanged
@@ -388,6 +423,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
       if (remotePage) {
         await this.local.savePage(remotePage);
         this.meta.lastSyncedUpdated[entry.title] = remotePage.updated;
+        changed = true;
       }
     }
 
@@ -398,7 +434,9 @@ export class GitHubSyncStore implements Store, SyncCapable {
       // deleted ourselves -> another device deleted it.
       await this.local.deletePage(title);
       delete this.meta.lastSyncedUpdated[title];
+      changed = true;
     }
+    return changed;
   }
 
   private async push(): Promise<void> {

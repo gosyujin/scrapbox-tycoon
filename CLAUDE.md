@@ -85,6 +85,7 @@
   - `GitHubStore` の全 `fetch()` に `cache: 'no-store'` を付ける (ref 読み取りが最大60秒キャッシュされ、`pull()` が自分の書き込みを他デバイスの変更と誤認してローカルを巻き戻す)。
   - `pull()` は dirty なページでも remote の `updated` が `lastSyncedUpdated` と食い違えば `stashConflictIfDiverged()` で「(sync conflict)」ページに退避する (負けた側の編集を無言で消さない)。`meta.conflictSeen` で再送時の複製を防ぐ。
   - `push()` は `pushBatch()` の前に `meta.pendingPush` を永続化する (応答が届かなかった自分の push を競合と誤認しないため)。remote とローカルの `lines` が同一なら競合扱いにしない。
+  - `savePage()` は既存と同一内容なら no-op (blur の度に呼ばれる `onChange` が無変更ページを dirty にして偽の競合を作るため)。pull 省略用の `lastPulledHeadSha` は pull「前」に読んだ HEAD を保存する。 → [decisions/09](docs/decisions/09-noop-save-conflict-and-polling.md)
   - `(sync conflict)` コピーは stash 時に `lines[0]` をコピー自身のタイトルに書き換える (ページの identity は `lines[0]` と一致している前提)。
 - ページ編集・タイトル処理 (`app.ts` の `onChange` / `editor.ts`): [docs/technical-notes.md](docs/technical-notes.md)
   - 1行目が空になったページは "Untitled" (衝突時 `uniqueTitle()` で `_N`) にリネームし、`/^Untitled(_\d+)?$/` なら現在のタイトルを維持する (無変更の blur で番号が増え続けないため)。

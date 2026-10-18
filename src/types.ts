@@ -42,6 +42,10 @@ export interface SyncStatus {
   // only syncs pick this up too). Null until the first successful sync.
   lastSyncedCommitSha: string | null;
   lastError: string | null;
+  // Bumped each time a sync changed pages in the local store (pulled in a
+  // remote edit/delete, or stashed a conflict copy), so the UI can re-render
+  // only when there is something new to show.
+  dataVersion: number;
 }
 
 // Implemented by stores that buffer edits locally and push them to a remote

@@ -738,6 +738,10 @@ blockquote.sb-quote {
   text-overflow: ellipsis;
   font-size: 11px;
   color: var(--muted);
+  /* The status bar itself ignores pointer events; the sync badge opts back
+     in because tapping it runs a sync now. */
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 .backend-badge,

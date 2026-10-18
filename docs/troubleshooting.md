@@ -31,3 +31,9 @@ GitHub 上の [`8994df4`](https://github.com/gosyujin/scrapbox-tycoon-notes/comm
 
 同期ログのコピー機能の詳細は [features.md](features.md) の「3. 同期ステータス履歴のコピー機能」を参照。
 
+
+### 9. 無変更保存が原因で出来た「(sync conflict)」ページ
+
+**既存データへの非遡及:** 修正前に出来たコピーは自動では消えない。コピーを開くと競合バナーに元ページとの
+一致/不一致が出る。**一致**なら「このコピーを削除」、**不一致**なら「違いを見る」で差分を確認して
+統合するか削除する。原因と切り分け: [decisions/09](decisions/09-noop-save-conflict-and-polling.md)
