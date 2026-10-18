@@ -81,8 +81,19 @@ fail」することを確認済み)。
 されるが 500 を返す」`setLostAckOnRefUpdate` を追加。修正を外すと両ケースとも
 fail することを確認済み)、`test/diff.test.mjs`。
 
+### 9. 無変更の保存が dirty になり競合を量産する問題 / 同期ポーリング
+
+**修正:** `GitHubSyncStore.savePage()` は既存と同一内容なら no-op
+(`isNoopSave()`)。これを外すと、ページを開いて閉じただけで dirty+`updated` 更新となり、
+他デバイスの編集と食い違って「(sync conflict)」ができる。`runSync()` の pull 省略
+(`meta.lastPulledHeadSha`) は **pull 前に読んだ HEAD** を保存すること (push 後に読む
+`lastSyncedCommitSha` は表示用で、未 pull の他デバイスのコミットを含み得るため
+流用すると取りこぼす)。詳細: [decisions/09](decisions/09-noop-save-conflict-and-polling.md)
+
 ## 既知の制限・未解決
 
+- 個別ページを開いている間は、他デバイスの更新を自動反映しない (編集中の上書きを避けるため。一覧のみ自動再描画)。
+- 実機 (スマホ PWA のバックグラウンド遷移時の即送信、バッジのタップ) は未確認。
 - 「branch moved during save」の根本原因の特定は棚上げ。経緯は [decisions/02-sync-failure-unhandled-rejection.md](decisions/02-sync-failure-unhandled-rejection.md) の「調査の経緯」を参照。
 
 ## テスト手法上の注意

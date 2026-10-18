@@ -122,8 +122,18 @@ const syncStatusEl = document.getElementById('sync-status') as HTMLElement;
 function describeSyncStatus(s: SyncStatus): string {
   if (s.state === 'syncing') return '同期中...';
   if (s.state === 'error') return `同期エラー: ${s.lastError}`;
-  if (s.dirtyCount > 0) return `未同期の変更: ${s.dirtyCount}件`;
+  // Separate wording for "this device still has to send something" vs
+  // "everything here is sent; this is when it last checked GitHub", so a
+  // reader on the other device can tell which side is lagging.
+  if (s.dirtyCount > 0) return `未送信の変更: ${s.dirtyCount}件 (まもなく送信)`;
+  if (s.lastSyncedAt) return `同期済み (確認 ${formatClockTime(s.lastSyncedAt)})`;
   return '同期済み';
+}
+
+function formatClockTime(epochSeconds: number): string {
+  const d = new Date(epochSeconds * 1000);
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  return `${d.getHours()}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
 
 // Text for the badge shown inline at the top of the notes list (see
@@ -188,6 +198,7 @@ function updateBadge(): void {
 
 function wireStoreStatus(): void {
   if (isSyncCapable(store)) {
+    let seenDataVersion = store.getSyncStatus().dataVersion;
     store.onSyncStatusChange((s) => {
       updateBadge();
       // A change made on another device (e.g. the source page of a merge
@@ -195,8 +206,12 @@ function wireStoreStatus(): void {
       // otherwise only runs when this tab makes its own edit. Once one
       // completes, refresh the list if that's what's on screen -- it has no
       // in-progress edit that a refresh could clobber, unlike a page view.
-      if (s.state === 'idle' && (location.hash === '' || location.hash === '#/')) {
-        void renderPageList();
+      // Only when the sync actually changed local pages: background polling
+      // syncs every so often, and re-rendering on each one would reset the
+      // scroll position for nothing.
+      if (s.state === 'idle' && s.dataVersion !== seenDataVersion) {
+        seenDataVersion = s.dataVersion;
+        if (location.hash === '' || location.hash === '#/') void renderPageList();
       }
     });
   }
@@ -208,7 +223,37 @@ wireStoreStatus();
 // meantime), so re-sync right away instead of waiting for this tab's own
 // next edit.
 document.addEventListener('visibilitychange', () => {
+  if (!isSyncCapable(store)) return;
+  // Going to the background (switching apps, locking the phone) is the last
+  // moment a pending edit can be sent: mobile browsers freeze the page, and
+  // the debounce timer would not fire until it is brought back. Sending now
+  // instead of waiting out the debounce is what lets the other device see an
+  // edit made just before putting the phone away.
+  const wanted = document.visibilityState === 'visible' || store.getSyncStatus().dirtyCount > 0;
+  if (wanted) {
+    void store.syncNow().catch(() => {
+      /* status line already reflects the error */
+    });
+  }
+});
+
+// A tab left open in the foreground (typically the PC) never gets a
+// visibilitychange, so without polling it only ever sees another device's
+// edit after a manual reload. The poll is one ref read when nothing changed
+// (see GitHubSyncStore.runSync).
+const BACKGROUND_POLL_MS = 30000;
+setInterval(() => {
   if (document.visibilityState === 'visible' && isSyncCapable(store)) {
+    void store.syncNow().catch(() => {
+      /* status line already reflects the error */
+    });
+  }
+}, BACKGROUND_POLL_MS);
+
+// Tapping the sync badge syncs right now -- the one-tap way to answer "has
+// the other device's change arrived yet?" without going into settings.
+syncStatusEl.addEventListener('click', () => {
+  if (isSyncCapable(store)) {
     void store.syncNow().catch(() => {
       /* status line already reflects the error */
     });
