@@ -2,6 +2,7 @@
 
 1エントリ1〜3行。経緯のあるものは `docs/decisions/` にリンクする。コミットは新しい順。
 
+- 2026-10-20 Added: `index.html` に CSP (meta) を追加 (`script-src 'self'`、`connect-src` は自サイトと GitHub API のみ)。同一オリジンの他アプリが XSS/改ざんされても PAT を持ち出せないようにする。実機確認は未。 → [decisions/10](docs/decisions/10-csp-meta.md)
 - 2026-10-18 Fixed/Changed: 無変更のページ保存が dirty になり「(sync conflict)」を量産していた問題を修正。前面表示中の 30 秒ポーリング・バックグラウンド移行時の即送信・同期バッジの時刻表示/タップで即同期を追加。 → [decisions/09](docs/decisions/09-noop-save-conflict-and-polling.md)
 - 2026-10-11 Changed: 追加ボタンと検索フォームを画面下のフッターに固定 (gyazo-tycoon-viewer と同レイアウト、キーボード追従あり)。 → [features](docs/features.md)
 - 2026-10-09 Added: ファビコン / apple-touch-icon / PWA アイコンを追加 (`icons/`、deploy workflow にも `cp -r icons` を追加)。
