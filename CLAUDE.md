@@ -89,4 +89,5 @@
   - `(sync conflict)` コピーは stash 時に `lines[0]` をコピー自身のタイトルに書き換える (ページの identity は `lines[0]` と一致している前提)。
 - ページ編集・タイトル処理 (`app.ts` の `onChange` / `editor.ts`): [docs/technical-notes.md](docs/technical-notes.md)
   - 1行目が空になったページは "Untitled" (衝突時 `uniqueTitle()` で `_N`) にリネームし、`/^Untitled(_\d+)?$/` なら現在のタイトルを維持する (無変更の blur で番号が増え続けないため)。
+- 外部通信・外部スクリプト・インライン script を追加/変更するとき (`index.html` の CSP meta): [docs/technical-notes.md](docs/technical-notes.md) の「10. CSP」。CSP を同時に更新しないと本番でブロックされる。
 - 既存データの修復方法: [docs/troubleshooting.md](docs/troubleshooting.md) (修正は保存済みデータを遡って直さない)

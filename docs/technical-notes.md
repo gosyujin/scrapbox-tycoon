@@ -90,10 +90,18 @@ fail することを確認済み)、`test/diff.test.mjs`。
 `lastSyncedCommitSha` は表示用で、未 pull の他デバイスのコミットを含み得るため
 流用すると取りこぼす)。詳細: [decisions/09](decisions/09-noop-save-conflict-and-polling.md)
 
+### 10. CSP (meta) による外部通信・外部スクリプトの制限
+
+**不変条件:** `index.html` の CSP meta は `connect-src 'self' https://api.github.com` だけを許可している。
+外部 API・CDN・フォント・インライン script を足すときは **CSP も同時に更新する** (忘れると本番でだけブロックされる。
+ローカルの `server.js` 配信でも meta CSP は効くので手元で気付ける)。インライン script は禁止 (`script-src 'self'`)。
+理由と未確認事項: [decisions/10](decisions/10-csp-meta.md)
+
 ## 既知の制限・未解決
 
 - 個別ページを開いている間は、他デバイスの更新を自動反映しない (編集中の上書きを避けるため。一覧のみ自動再描画)。
 - 実機 (スマホ PWA のバックグラウンド遷移時の即送信、バッジのタップ) は未確認。
+- CSP 追加後の実機確認 (PAT での pull/push、PWA、Service Worker 登録) は未確認。確認できたらこの行を削除し CHANGELOG に「確認済み」と残す。
 - 「branch moved during save」の根本原因の特定は棚上げ。経緯は [decisions/02-sync-failure-unhandled-rejection.md](decisions/02-sync-failure-unhandled-rejection.md) の「調査の経緯」を参照。
 
 ## テスト手法上の注意
