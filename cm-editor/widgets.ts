@@ -29,7 +29,7 @@ export class ImageWidget extends WidgetType {
   }
   toDOM(view: EditorView): HTMLElement {
     const span = document.createElement('span');
-    span.className = 'sb-img';
+    span.className = 'sbe-img';
     const img = document.createElement('img');
     img.src = imageSrc(this.url);
     img.alt = this.url;
@@ -38,7 +38,7 @@ export class ImageWidget extends WidgetType {
     img.addEventListener('load', () => view.requestMeasure());
     img.addEventListener('error', () => {
       span.textContent = this.url;
-      span.classList.add('sb-img-error');
+      span.classList.add('sbe-img-error');
       view.requestMeasure();
     });
     span.appendChild(img);
@@ -69,7 +69,7 @@ export class TableWidget extends WidgetType {
   }
   toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement('div');
-    wrap.className = 'sb-table-wrap';
+    wrap.className = 'sbe-table-wrap';
     const table = document.createElement('table');
     table.className = 'sb-table';
     if (this.name) {

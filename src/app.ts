@@ -286,8 +286,6 @@ async function route(): Promise<void> {
     await renderPageList();
   } else if (hash === '#/settings') {
     await renderSettings();
-  } else if (hash === '#/editor' || hash === '#/editor/') {
-    await renderEditorLab();
   } else if (hash.startsWith('#/page/')) {
     const title = decodeURIComponent(hash.slice('#/page/'.length));
     await renderPage(title);
@@ -298,21 +296,6 @@ async function route(): Promise<void> {
     await renderReferencePage(title);
   } else {
     app.innerHTML = '<p>Not found</p>';
-  }
-}
-
-// Standalone editor experiment (lab/editor). Independent of the store,
-// parser and styles above; its CodeMirror bundle is only fetched for this
-// route. The ?v=<sha> that index.html puts on app.js is forwarded so the
-// bundle is cache-busted per deploy like every other module.
-async function renderEditorLab(): Promise<void> {
-  app.innerHTML = '<div id="editor-lab-root"><p>loading editor…</p></div>';
-  try {
-    const mod = await import(`./lab/editor.js${new URL(import.meta.url).search}`);
-    const root = document.getElementById('editor-lab-root');
-    if (root) mod.mount(root); // gone if the user navigated away while loading
-  } catch (e) {
-    app.innerHTML = `<p>editor lab の読み込みに失敗しました: ${escapeHtml(String(e))}</p>`;
   }
 }
 

@@ -158,7 +158,7 @@ body {
   border-radius: 6px;
   background: var(--bg);
   color: var(--fg);
-  font-size: 16px; /* see .page-edit: avoids iOS Safari's zoom-on-focus */
+  font-size: 16px; /* avoids iOS Safari's zoom-on-focus (see .sbe .cm-content) */
 }
 
 /* The footer search box's own hit-page dropdown (Scrapbox shows this on
@@ -398,8 +398,6 @@ h1, h2, h3 {
 .line-view {
   padding: 3px 6px;
   border-radius: 4px;
-  /* Matched against .edit-layer's line-height so a line's rendered height
-     doesn't visibly jump when switching between view and edit mode. */
   line-height: 1.4;
   font-size: 15px;
   cursor: text;
@@ -408,9 +406,6 @@ h1, h2, h3 {
   min-height: 1.4em;
 }
 .line-view.line-title {
-  /* Bold-only, not larger -- a bigger font here than the edit-mode
-     textarea's 16px (see .page-edit) makes the line reflow height jump
-     when switching between view and edit, shifting the whole page. */
   font-weight: 700;
   margin-bottom: 6px;
 }
@@ -426,121 +421,9 @@ h1, h2, h3 {
   user-select: none;
 }
 
-/* Edit mode is two stacked layers in .edit-wrap: the real <textarea>
-   (.page-edit) on top handles all actual input/selection/caret, with its
-   own text and background made invisible; a plain, non-interactive
-   .edit-backdrop div sits directly behind it showing the *same* text with
-   whitespace/indent decoration (see editor.ts's renderEditBackdrop()).
-   Both share .edit-layer for byte-identical box model + font, which is
-   what keeps their line-wrapping pixel-identical -- any mismatch there
-   would make the two layers visibly drift apart. */
-.edit-wrap {
-  position: relative;
-  border: 1px solid var(--link);
-  border-radius: 4px;
-  background: var(--accent);
-}
-
-.edit-layer {
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 4em;
-  margin: 0;
-  padding: 3px 6px;
-  border: none;
-  border-radius: 4px;
-  font-family: inherit;
-  /* Must be >= 16px: iOS Safari auto-zooms the page on focusing any
-     input/textarea with a smaller font size (to make the text legible),
-     and never zooms back out on blur — which is what was causing the
-     "page can suddenly be swiped sideways" bug after editing. */
-  font-size: 16px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-  tab-size: 4;
-  /* Widens every space character itself (not just the backdrop's dot
-     markers) -- on the shared class so it applies identically to the real
-     textarea and the backdrop, keeping their layout in sync. A per-
-     character width (e.g. only the leading indent's spaces) isn't
-     reachable this way -- word-spacing is uniform across an element, and
-     a native <textarea> has no way to style individual characters
-     differently at all -- but widening every space still makes a run of
-     N leading spaces N times as much wider, which is the concrete "1
-     space vs. 2" problem this is for. */
-  word-spacing: 0.3em;
-}
-
-.edit-backdrop {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  color: var(--fg);
-}
-
-.page-edit {
-  position: relative;
-  resize: none;
-  background: transparent;
-  color: transparent;
-  caret-color: var(--fg);
-  overflow: hidden;
-}
-.page-edit:focus { outline: none; }
-
-/* Whitespace markers in the backdrop -- ::after is absolutely positioned
-   (no layout footprint of its own) so decorating a space can never change
-   that space's width/wrapping relative to the same character in the real
-   textarea underneath. */
-.ws-mark { position: relative; }
-.ws-mark::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-}
-.ws-space::after {
-  width: 0.22em;
-  height: 0.22em;
-  border-radius: 50%;
-  background: var(--muted);
-  opacity: 0.6;
-}
-/* Full-width space: a common, easy-to-miss typo when it lands where a
-   half-width space was intended (they count as the same "one indent
-   level" per parser.ts's splitIndent, but look identical unmarked) --
-   deliberately a different shape *and* color from a half-width space so
-   the two are never confused for one another. */
-.ws-ideospace::after {
-  width: 0.5em;
-  height: 0.5em;
-  border-radius: 2px;
-  background: var(--link-missing);
-  opacity: 0.35;
-}
-.ws-tab::after {
-  content: '\2192';
-  width: auto;
-  height: auto;
-  font-size: 0.8em;
-  color: var(--muted);
-  opacity: 0.7;
-}
-/* The leading indentation run specifically (vs. whitespace later in the
-   line) -- box-shadow, not border, so it paints without adding to the
-   element's box size (a border would, which would desync the backdrop's
-   wrapping from the textarea's). One continuous-looking vertical guide
-   per depth level falls out naturally: every line's Nth leading space
-   sits at the same horizontal position, because space width is constant
-   for a given font/size even in a proportional font. */
-.ws-indent { box-shadow: inset 1px 0 0 var(--border); }
-
 /* Floating popup shown near a text selection while editing (Scrapbox's
-   "select text -> act on it" pattern). position:fixed + JS-set top/left,
-   see editor.ts's updateSelectionToolbar(). */
+   "select text -> act on it" pattern). Placed by a CodeMirror tooltip, see
+   cm-editor/popup.ts. */
 .selection-toolbar {
   display: flex;
   gap: 4px;
@@ -817,7 +700,7 @@ blockquote.sb-quote {
   color: var(--fg);
   width: 100%;
   max-width: 420px;
-  font-size: 16px; /* see .page-edit: avoids iOS Safari's zoom-on-focus */
+  font-size: 16px; /* avoids iOS Safari's zoom-on-focus (see .sbe .cm-content) */
 }
 .settings button {
   margin-top: 14px;

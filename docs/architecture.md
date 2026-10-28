@@ -26,8 +26,14 @@
   [scrapbox-pwa-viewer](https://github.com/gosyujin/scrapbox-pwa-viewer) の
   `build.py` からの移植で、レンダリング結果をそちらと合わせるためにロジックを
   意図的に同期させている。
-- `src/editor.ts` — テキストエリアベースのエディタ。`onChange` は **キー入力毎
-  ではなく blur/commit 時に一度だけ**発火する (この前提を誤ると
-  app.ts 側でバグを作り込む — 実例は下記)。
+- `src/editor.ts` — app.ts から見たエディタの窓口 (薄いローダー)。実体は
+  `cm-editor/` の CodeMirror 6 エディタで、esbuild が `js/cm-editor.js` に 1 本化し
+  オンデマンドで読み込む (経緯: [decisions/11](decisions/11-codemirror-editor.md))。
+  `onChange` は **キー入力毎ではなく blur/commit 時に一度だけ**発火する (この前提を
+  誤ると app.ts 側でバグを作り込む — 実例は下記)。
+- `cm-editor/` — CodeMirror エディタ本体 (tsc の対象外、`npm run build` が型チェック +
+  バンドル)。`decorations.ts` (記法の描画/展開)、`commands.ts` (キー操作)、
+  `popup.ts`/`format.ts` (選択ポップアップ)、`mobile.ts` (キーボード追従)、`index.ts` (組み立て)。
+- `src/outline.ts` — アウトライン移動/インデントの純粋ロジック (DOM 非依存、テスト対象)。
 - `src/app.ts` — ルーティング・ページ描画・設定画面など UI 全般。
 

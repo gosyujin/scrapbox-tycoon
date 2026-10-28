@@ -11,22 +11,14 @@
 // the saved document are always the raw Scrapbox notation.
 import { EditorState, StateEffect, StateField, type Range } from '@codemirror/state';
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view';
-import { blockAt, findBlocks, splitIndent, type Block } from './blocks';
+import { blockAt, findBlocks, splitIndent } from './blocks';
+import { linkConfig } from './config';
+import { focusField, focusTracker, isFocusEffect } from './focus';
 import { ImageWidget, TableWidget } from './widgets';
 
-// ---- focus tracking --------------------------------------------------------
-// Rendered-everywhere while the editor is not focused (like Scrapbox);
-// only lines touched by the selection expand while it is.
-
-const setFocus = StateEffect.define<boolean>();
-const focusField = StateField.define<boolean>({
-  create: () => false,
-  update(value, tr) {
-    for (const e of tr.effects) if (e.is(setFocus)) return e.value;
-    return value;
-  },
-});
-const focusTracker = EditorView.focusChangeEffect.of((_state, focusing) => setFocus.of(focusing));
+// Forces a rebuild without a document change (e.g. a newly created page
+// should turn its links from "missing" to "exists").
+export const refreshDecorations = StateEffect.define<null>();
 
 // ---- inline scanner --------------------------------------------------------
 
@@ -56,10 +48,11 @@ function matchBracket(text: string, start: number): number {
 interface Ctx {
   active: boolean;
   out: Range<Decoration>[];
+  resolve: (title: string) => { href: string; exists: boolean };
 }
 
 const hideDeco = Decoration.replace({});
-const syntaxDeco = Decoration.mark({ class: 'sb-syntax' });
+const syntaxDeco = Decoration.mark({ class: 'sbe-syntax' });
 
 // Syntax characters: invisible on an inactive line, dimmed on the active one.
 function syntax(ctx: Ctx, from: number, to: number): void {
@@ -72,6 +65,9 @@ function mark(ctx: Ctx, from: number, to: number, cls: string, attrs?: Record<st
   ctx.out.push(Decoration.mark({ class: cls, attributes: attrs }).range(from, to));
 }
 
+// Same class names as parser.ts's renderToken, so the global style.css rules
+// (.sb-h1, .sb-strike, .deco-\<, ...) style the editor exactly like a
+// rendered page.
 function decoClass(marks: string): string {
   const cls: string[] = [];
   const stars = [...marks].filter((c) => c === '*').length;
@@ -81,14 +77,25 @@ function decoClass(marks: string): string {
   if (marks.includes('-')) cls.push('sb-strike');
   if (marks.includes('/')) cls.push('sb-em');
   if (marks.includes('_')) cls.push('sb-underline');
-  if (cls.length === 0) cls.push('sb-strong');
-  return cls.join(' ');
+  const custom: string[] = [];
+  for (const ch of marks) if (!'*-/_'.includes(ch) && !custom.includes(`deco-${ch}`)) custom.push(`deco-${ch}`);
+  if (cls.length === 0 && custom.length === 0) cls.push('sb-strong');
+  return [...cls, ...custom].join(' ');
 }
 
-const linkAttrs = (href: string): Record<string, string> => ({
-  'data-href': href,
-  title: 'Ctrl/⌘+クリックで開く',
-});
+// Links carry their destination in data-href so one click handler (index.ts)
+// serves all of them; `sbe-nav` (inactive lines only) marks the ones a plain
+// click follows -- on the active line a click edits instead.
+function linkMark(ctx: Ctx, from: number, to: number, extra: string, href: string, external: boolean, exists?: boolean): void {
+  const cls = ['sbe-link', extra, external ? 'external' : exists ? 'exists' : 'missing'];
+  if (!ctx.active) cls.push('sbe-nav');
+  mark(ctx, from, to, cls.filter(Boolean).join(' '), { 'data-href': href, ...(external ? { 'data-ext': '1' } : {}) });
+}
+
+function internalLink(ctx: Ctx, from: number, to: number, title: string, extra: string): void {
+  const r = ctx.resolve(title);
+  linkMark(ctx, from, to, extra, r.href, false, r.exists);
+}
 
 // A URL standing alone ("[url]" / bare url): image -> inline <img> widget on
 // inactive lines, otherwise a link. [from,to) includes the brackets (if any),
@@ -99,7 +106,7 @@ function urlAlone(ctx: Ctx, url: string, from: number, to: number, innerFrom: nu
     return;
   }
   syntax(ctx, from, innerFrom);
-  mark(ctx, innerFrom, innerTo, 'sb-link sb-external', linkAttrs(url));
+  linkMark(ctx, innerFrom, innerTo, '', url, true);
   syntax(ctx, innerTo, to);
 }
 
@@ -138,7 +145,7 @@ function bracket(ctx: Ctx, text: string, i: number, j: number, off: number): voi
       urlAlone(ctx, core, A, B + 1, off + lo, off + hi);
     } else {
       syntax(ctx, A, off + lo);
-      mark(ctx, off + lo, off + hi, 'sb-link sb-strong-link', { 'data-title': core });
+      internalLink(ctx, off + lo, off + hi, core, 'strong');
       syntax(ctx, off + hi, B + 1);
     }
     return;
@@ -154,7 +161,7 @@ function bracket(ctx: Ctx, text: string, i: number, j: number, off: number): voi
     if (label) {
       const labelFrom = A + 1 + first.length + (rest.length - rest.trimStart().length);
       syntax(ctx, A, labelFrom);
-      mark(ctx, labelFrom, labelFrom + label.length, 'sb-link sb-external', linkAttrs(first));
+      linkMark(ctx, labelFrom, labelFrom + label.length, '', first, true);
       syntax(ctx, labelFrom + label.length, B + 1);
     } else {
       urlAlone(ctx, first, A, B + 1, A + 1, B);
@@ -167,7 +174,7 @@ function bracket(ctx: Ctx, text: string, i: number, j: number, off: number): voi
     if (label) {
       const labelFrom = A + 1 + (restRaw.length - restRaw.trimStart().length);
       syntax(ctx, A, labelFrom);
-      mark(ctx, labelFrom, labelFrom + label.length, 'sb-link sb-external', linkAttrs(last));
+      linkMark(ctx, labelFrom, labelFrom + label.length, '', last, true);
       syntax(ctx, labelFrom + label.length, B + 1);
     } else {
       urlAlone(ctx, last, A, B + 1, A + 1, B);
@@ -177,13 +184,13 @@ function bracket(ctx: Ctx, text: string, i: number, j: number, off: number): voi
 
   if (inner.endsWith('.icon') && inner.length > 5) {
     syntax(ctx, A, A + 1);
-    mark(ctx, A + 1, B - 5, 'sb-link sb-icon', { 'data-title': inner.slice(0, -5) });
+    internalLink(ctx, A + 1, B - 5, inner.slice(0, -5).trim() || 'icon', '');
     syntax(ctx, B - 5, B + 1);
     return;
   }
 
   syntax(ctx, A, A + 1);
-  mark(ctx, A + 1, B, 'sb-link', { 'data-title': inner });
+  internalLink(ctx, A + 1, B, inner, '');
   syntax(ctx, B, B + 1);
 }
 
@@ -198,7 +205,7 @@ function scanInline(ctx: Ctx, text: string, off: number): void {
       const j = text.indexOf('`', i + 1);
       if (j === -1) break;
       syntax(ctx, off + i, off + i + 1);
-      mark(ctx, off + i + 1, off + j, 'sb-inline-code');
+      mark(ctx, off + i + 1, off + j, 'sbe-inline-code');
       syntax(ctx, off + j, off + j + 1);
       i = j + 1;
       continue;
@@ -216,7 +223,7 @@ function scanInline(ctx: Ctx, text: string, off: number): void {
     if (ch === '#' && (i === 0 || /\s/.test(text[i - 1]!))) {
       const m = HASHTAG_RE.exec(text.slice(i));
       if (m) {
-        mark(ctx, off + i, off + i + m[0].length, 'sb-link sb-tag', { 'data-title': m[1]! });
+        internalLink(ctx, off + i, off + i + m[0].length, m[1]!, 'tag');
         i += m[0].length;
         continue;
       }
@@ -243,13 +250,20 @@ function lineDeco(classes: string[], depth: number): Decoration {
 // active or not -- so expanding a line never shifts its indentation.
 function indentCells(ctx: Ctx, lineFrom: number, cells: number): void {
   for (let k = 0; k < cells; k++) {
-    ctx.out.push(Decoration.mark({ class: 'sb-ws' }).range(lineFrom + k, lineFrom + k + 1));
+    ctx.out.push(Decoration.mark({ class: 'sbe-ws' }).range(lineFrom + k, lineFrom + k + 1));
   }
 }
 
 function build(state: EditorState): DecorationSet {
   const doc = state.doc;
   const focused = state.field(focusField);
+  const cfg = state.facet(linkConfig);
+  const resolve = (title: string): { href: string; exists: boolean } => {
+    const key = title.toLowerCase();
+    if (cfg.knownTitles.has(key)) return { href: `${cfg.linkBase}${encodeURIComponent(title)}`, exists: true };
+    if (cfg.fallback?.knownTitles.has(key)) return { href: `${cfg.fallback.linkBase}${encodeURIComponent(title)}`, exists: true };
+    return { href: `${cfg.linkBase}${encodeURIComponent(title)}`, exists: false };
+  };
   const activeLines = new Set<number>();
   if (focused) {
     for (const r of state.selection.ranges) {
@@ -264,7 +278,7 @@ function build(state: EditorState): DecorationSet {
 
   for (let n = 1; n <= doc.lines; n++) {
     const line = doc.line(n);
-    const ctx: Ctx = { active: activeLines.has(n), out };
+    const ctx: Ctx = { active: activeLines.has(n), out, resolve };
     const block = blockAt(blocks, n);
 
     // Tables: a single block widget over the whole block while no line of it
@@ -290,13 +304,13 @@ function build(state: EditorState): DecorationSet {
         }
       }
       const base = n === block.head ? block.depth : block.depth + 1;
-      out.push(lineDeco(['sb-line', 'sb-code-line', n === block.head ? 'sb-code-head' : 'sb-table-raw'], base).range(line.from));
+      out.push(lineDeco(['sbe-line', 'sbe-code-line', n === block.head ? 'sbe-code-head' : 'sbe-table-raw'], base).range(line.from));
       indentCells(ctx, line.from, base);
       if (n === block.head) {
         const content = line.text.slice(block.depth);
         const prefix = content.indexOf(':') + 1;
         syntax(ctx, line.from + block.depth, line.from + block.depth + prefix);
-        mark(ctx, line.from + block.depth + prefix, line.to, 'sb-code-name');
+        mark(ctx, line.from + block.depth + prefix, line.to, 'sbe-code-name');
       }
       continue;
     }
@@ -304,22 +318,22 @@ function build(state: EditorState): DecorationSet {
     if (block?.kind === 'code') {
       const isHead = n === block.head;
       const cells = isHead ? block.depth : block.depth + 1;
-      out.push(lineDeco(['sb-line', 'sb-code-line', isHead ? 'sb-code-head' : 'sb-code-body'], cells).range(line.from));
+      out.push(lineDeco(['sbe-line', 'sbe-code-line', isHead ? 'sbe-code-head' : 'sbe-code-body'], cells).range(line.from));
       indentCells(ctx, line.from, cells);
       if (isHead) {
         const prefix = line.text.slice(block.depth).indexOf(':') + 1;
         syntax(ctx, line.from + block.depth, line.from + block.depth + prefix);
-        mark(ctx, line.from + block.depth + prefix, line.to, 'sb-code-name');
+        mark(ctx, line.from + block.depth + prefix, line.to, 'sbe-code-name');
       }
       continue;
     }
 
     const { depth, content } = splitIndent(line.text);
-    const classes = ['sb-line'];
-    if (n === 1) classes.push('sb-title');
-    else if (depth > 0) classes.push('sb-indented');
+    const classes = ['sbe-line'];
+    if (n === 1) classes.push('sbe-title');
+    else if (depth > 0) classes.push('sbe-indented');
     const isQuote = n > 1 && content.startsWith('>');
-    if (isQuote) classes.push('sb-quote');
+    if (isQuote) classes.push('sbe-quote');
     out.push(lineDeco(classes, n === 1 ? 0 : depth).range(line.from));
     if (n > 1) indentCells(ctx, line.from, depth);
 
@@ -338,8 +352,8 @@ function build(state: EditorState): DecorationSet {
 const decorationField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update(value, tr) {
-    const focusChanged = tr.effects.some((e) => e.is(setFocus));
-    if (tr.docChanged || tr.selection || focusChanged) return build(tr.state);
+    const forced = tr.effects.some((e) => isFocusEffect(e) || e.is(refreshDecorations));
+    if (tr.docChanged || tr.selection || forced) return build(tr.state);
     return value;
   },
   provide: (f) => EditorView.decorations.from(f),

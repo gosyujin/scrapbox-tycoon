@@ -2,23 +2,9 @@
 // decoration machinery so the Tab command and the decoration builder agree
 // on what counts as "inside a code:/table: block".
 import type { Text } from '@codemirror/state';
+import { splitIndent } from '../src/parser';
 
-export interface Indent {
-  depth: number;
-  content: string;
-}
-
-// Same rule as Scrapbox / the main app: every leading half-width space,
-// tab or full-width space is one indent level.
-export function splitIndent(text: string): Indent {
-  let depth = 0;
-  while (depth < text.length) {
-    const ch = text[depth];
-    if (ch === ' ' || ch === '\t' || ch === '　') depth++;
-    else break;
-  }
-  return { depth, content: text.slice(depth) };
-}
+export { splitIndent };
 
 export interface Block {
   kind: 'code' | 'table';

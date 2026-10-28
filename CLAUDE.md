@@ -5,7 +5,7 @@
 
 ## この codebase 特有の注意点
 
-- **`editor.ts` の `onChange` は blur/commit 時に一度だけ発火する。**
+- **エディタ (`src/editor.ts` → `cm-editor/index.ts`) の `onChange` は blur/commit 時に一度だけ発火する。**
   キー入力の度に呼ばれるものではない。「編集途中の一時的な状態かもしれない」
   という前提で `app.ts` 側にフォールバック処理を書くと、過去に実際に
   タイトル/内容の不整合バグを生んだ ([docs/decisions/04-empty-page-title-desync.md](docs/decisions/04-empty-page-title-desync.md) 参照)。
@@ -87,6 +87,8 @@
   - `push()` は `pushBatch()` の前に `meta.pendingPush` を永続化する (応答が届かなかった自分の push を競合と誤認しないため)。remote とローカルの `lines` が同一なら競合扱いにしない。
   - `savePage()` は既存と同一内容なら no-op (blur の度に呼ばれる `onChange` が無変更ページを dirty にして偽の競合を作るため)。pull 省略用の `lastPulledHeadSha` は pull「前」に読んだ HEAD を保存する。 → [decisions/09](docs/decisions/09-noop-save-conflict-and-polling.md)
   - `(sync conflict)` コピーは stash 時に `lines[0]` をコピー自身のタイトルに書き換える (ページの identity は `lines[0]` と一致している前提)。
-- ページ編集・タイトル処理 (`app.ts` の `onChange` / `editor.ts`): [docs/technical-notes.md](docs/technical-notes.md)
+- ページ編集・タイトル処理 (`app.ts` の `onChange` / `editor.ts` / `cm-editor/`): [docs/technical-notes.md](docs/technical-notes.md), [decisions/11](docs/decisions/11-codemirror-editor.md)
+  - `cm-editor/` は tsc の対象外 (bare import を解決できないため)。esbuild で `js/cm-editor.js` にバンドルされ、`src/editor.ts` が `import('./cm-editor.js?v=…')` で遅延ロードする。ここを `src/` に移したり、静的 import にしない。
+  - エディタの CSS は `.sbe` 配下 / `sbe-` 接頭辞のみ (`cm-editor/style.ts`)。parser.ts と共通の装飾クラス (`sb-h1` 等) は style.css 側で定義済みなので再定義しない。
   - 1行目が空になったページは "Untitled" (衝突時 `uniqueTitle()` で `_N`) にリネームし、`/^Untitled(_\d+)?$/` なら現在のタイトルを維持する (無変更の blur で番号が増え続けないため)。
 - 既存データの修復方法: [docs/troubleshooting.md](docs/troubleshooting.md) (修正は保存済みデータを遡って直さない)

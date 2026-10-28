@@ -7,7 +7,7 @@ GitHub リポジトリ (`gosyujin/scrapbox-tycoon-notes`) にまとめてコミ�
 
 ## 機能
 
-- Scrapbox 記法のページ編集 (テキストエリアベースのエディタ)、ページ一覧のカード表示
+- Scrapbox 記法のページ編集 (CodeMirror 6: クリックした行だけ記法が展開される)、ページ一覧のカード表示
 - ローカルファースト保存 (localStorage) と GitHub へのバックグラウンド同期
 - 同期ステータス履歴のコピー (デバッグ用)
 - 同期競合の退避 (「(sync conflict)」ページ) と競合バナー・行単位 diff

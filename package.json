@@ -4,11 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc && node scripts/build-lab-editor.mjs && node scripts/write-build-info.mjs && node scripts/cache-bust-imports.mjs",
+    "build": "tsc && tsc -p cm-editor/tsconfig.json && node scripts/build-cm-editor.mjs && node scripts/write-build-info.mjs && node scripts/cache-bust-imports.mjs",
     "watch": "tsc --watch",
     "dev": "npm run build && node server.js",
     "test": "npm run build && node --test test/*.test.mjs",
-    "typecheck:lab": "tsc -p lab/editor/tsconfig.json"
+    "typecheck:cm": "tsc -p cm-editor/tsconfig.json"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.20.4",

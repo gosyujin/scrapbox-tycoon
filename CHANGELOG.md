@@ -2,6 +2,7 @@
 
 1エントリ1〜3行。経緯のあるものは `docs/decisions/` にリンクする。コミットは新しい順。
 
+- 2026-10-28 Changed/Added: ページエディタを textarea から CodeMirror 6 に置換 (クリックした行だけ記法を展開、他は描画済み)。選択ポップアップ (リンク/装飾)、Ctrl+矢印 (行) / Alt+矢印 (段落) のアウトライン移動・インデント、スマホでキーボードに隠れないキャレット追従を追加。 → [decisions/11](docs/decisions/11-codemirror-editor.md)
 - 2026-10-18 Fixed/Changed: 無変更のページ保存が dirty になり「(sync conflict)」を量産していた問題を修正。前面表示中の 30 秒ポーリング・バックグラウンド移行時の即送信・同期バッジの時刻表示/タップで即同期を追加。 → [decisions/09](docs/decisions/09-noop-save-conflict-and-polling.md)
 - 2026-10-11 Changed: 追加ボタンと検索フォームを画面下のフッターに固定 (gyazo-tycoon-viewer と同レイアウト、キーボード追従あり)。 → [features](docs/features.md)
 - 2026-10-09 Added: ファビコン / apple-touch-icon / PWA アイコンを追加 (`icons/`、deploy workflow にも `cp -r icons` を追加)。
