@@ -18,7 +18,7 @@ import {
 } from './store/reference-store.js';
 import { makeVisitTracker } from './visit-tracking.js';
 import { matchQuery } from './search.js';
-import type { Page, Store, SyncCapable, SyncStatus } from './types.js';
+import type { Page, Store, SyncCapable, SyncPhase, SyncStatus } from './types.js';
 
 function getReferenceRelatedPages(title: string): Promise<{
   hop1: { title: string; description: string; direction: string }[];
@@ -120,14 +120,46 @@ const app = document.getElementById('app') as HTMLElement;
 const syncStatusEl = document.getElementById('sync-status') as HTMLElement;
 
 function describeSyncStatus(s: SyncStatus): string {
-  if (s.state === 'syncing') return '同期中...';
-  if (s.state === 'error') return `同期エラー: ${s.lastError}`;
-  // Separate wording for "this device still has to send something" vs
-  // "everything here is sent; this is when it last checked GitHub", so a
-  // reader on the other device can tell which side is lagging.
-  if (s.dirtyCount > 0) return `未送信の変更: ${s.dirtyCount}件 (まもなく送信)`;
-  if (s.lastSyncedAt) return `同期済み (確認 ${formatClockTime(s.lastSyncedAt)})`;
-  return '同期済み';
+  switch (s.phase) {
+    case 'starting':
+      return '同期開始 — GitHub を確認中';
+    case 'pulling':
+      return '同期中 — 受信中';
+    case 'pushing':
+      return s.dirtyCount > 0 ? `同期中 — 送信中 (${s.dirtyCount}件)` : '同期中 — 送信中';
+    case 'error':
+      return `同期エラー: ${s.lastError}`;
+    case 'conflict':
+      return `同期完了 — 競合 ${s.conflictCount}件 (要確認)${s.lastSyncedAt ? ` ${formatClockTime(s.lastSyncedAt)}` : ''}`;
+    case 'done':
+      return s.lastSyncedAt ? `同期完了 (確認 ${formatClockTime(s.lastSyncedAt)})` : '同期完了';
+    case 'waiting':
+      // "this device still has to send something" vs "nothing has happened
+      // yet", so a reader on the other device can tell which side is lagging.
+      return s.dirtyCount > 0 ? `未送信の変更: ${s.dirtyCount}件 (まもなく送信)` : '待機中 (まだ同期していません)';
+  }
+}
+
+// Where each phase sits on the four-segment progress bar of the badge:
+// 1 waiting, 2 starting, 3 syncing (pulling/pushing), 4 finished.
+const SYNC_PHASE_STEP: Record<SyncPhase, number> = {
+  waiting: 1,
+  starting: 2,
+  pulling: 3,
+  pushing: 3,
+  error: 3,
+  done: 4,
+  conflict: 4,
+};
+
+// The badge is "icon + bar + text" rather than text alone: on a phone the text
+// is cut off with an ellipsis, while the bar's colour and the spinner stay
+// readable at a glance.
+function syncBadgeHtml(s: SyncStatus): string {
+  const step = SYNC_PHASE_STEP[s.phase];
+  const segments = [1, 2, 3, 4].map((i) => `<i${i <= step ? ' class="on"' : ''}></i>`).join('');
+  const spinner = s.phase === 'pulling' || s.phase === 'pushing' ? '<span class="sync-spinner"></span>' : '';
+  return `<span class="sync-steps" aria-hidden="true">${segments}</span>${spinner}<span class="sync-label">${escapeHtml(describeSyncStatus(s))}</span>`;
 }
 
 function formatClockTime(epochSeconds: number): string {
@@ -188,7 +220,10 @@ function syncInfoHtml(pageCount: number): string {
 
 function updateBadge(): void {
   if (isSyncCapable(store)) {
-    syncStatusEl.textContent = describeSyncStatus(store.getSyncStatus());
+    const status = store.getSyncStatus();
+    syncStatusEl.className = `sync-status sync-${status.phase}`;
+    syncStatusEl.title = describeSyncStatus(status);
+    syncStatusEl.innerHTML = syncBadgeHtml(status);
     syncStatusEl.style.display = '';
   } else {
     syncStatusEl.textContent = '';
@@ -240,8 +275,10 @@ document.addEventListener('visibilitychange', () => {
 // A tab left open in the foreground (typically the PC) never gets a
 // visibilitychange, so without polling it only ever sees another device's
 // edit after a manual reload. The poll is one ref read when nothing changed
-// (see GitHubSyncStore.runSync).
-const BACKGROUND_POLL_MS = 30000;
+// (see GitHubSyncStore.runSync). 10s: "write on the phone, see it on the PC
+// right away" is the one thing this sync must deliver, and an idle poll costs
+// a single ref read (~360/h, far under GitHub's 5000/h).
+const BACKGROUND_POLL_MS = 10000;
 setInterval(() => {
   if (document.visibilityState === 'visible' && isSyncCapable(store)) {
     void store.syncNow().catch(() => {

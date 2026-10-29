@@ -627,6 +627,46 @@ blockquote.sb-quote {
   cursor: pointer;
 }
 
+/* Sync badge phases (see syncBadgeHtml in app.ts): a 4-segment bar that fills
+   waiting -> starting -> syncing -> finished, a spinner while data is moving,
+   and one colour per outcome. */
+.sync-status { display: flex; align-items: center; gap: 6px; }
+.sync-status .sync-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sync-steps { display: inline-flex; gap: 2px; flex: none; }
+.sync-steps i {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  background: var(--border);
+}
+.sync-steps i.on { background: var(--muted); }
+.sync-starting .sync-steps i.on:last-child { background: var(--link); animation: sync-pulse 1s ease-in-out infinite; }
+.sync-pulling .sync-steps i.on,
+.sync-pushing .sync-steps i.on { background: var(--link); }
+.sync-done .sync-steps i.on { background: var(--link-external); }
+.sync-conflict .sync-steps i.on { background: #d9822b; }
+.sync-error .sync-steps i.on { background: var(--link-missing); }
+.sync-done .sync-label { color: var(--link-external); }
+.sync-conflict .sync-label { color: #d9822b; font-weight: 700; }
+.sync-error .sync-label { color: var(--link-missing); }
+.sync-pulling .sync-label,
+.sync-pushing .sync-label,
+.sync-starting .sync-label { color: var(--link); }
+.sync-spinner {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--border);
+  border-top-color: var(--link);
+  border-radius: 50%;
+  animation: sync-spin 0.8s linear infinite;
+}
+@keyframes sync-spin { to { transform: rotate(360deg); } }
+@keyframes sync-pulse { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) {
+  .sync-spinner, .sync-starting .sync-steps i.on:last-child { animation-duration: 3s; }
+}
+
 .backend-badge,
 .build-info {
   min-width: 0;

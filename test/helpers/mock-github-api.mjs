@@ -42,6 +42,12 @@ export function installMockGitHubApi({ delayMs = 100 } = {}) {
   // the PATCH went out.
   let lostAckOnRefUpdate = false;
 
+  // One-shot async hook run at the START of the next ref PATCH, before the
+  // fast-forward check. Lets a test land another writer's complete commit in
+  // the window between a client's last read and its ref update -- which makes
+  // that PATCH 422 and forces the client's commit() retry path.
+  let beforeRefUpdateHook = null;
+
   function delay() {
     return new Promise((r) => setTimeout(r, delayMs));
   }
@@ -101,6 +107,11 @@ export function installMockGitHubApi({ delayMs = 100 } = {}) {
     }
     if (method === 'PATCH' && path === 'git/refs/heads/main') {
       const body = JSON.parse(init.body);
+      if (beforeRefUpdateHook) {
+        const hook = beforeRefUpdateHook;
+        beforeRefUpdateHook = null;
+        await hook();
+      }
       if (commitParent.get(body.sha) !== refSha) {
         return new Response(JSON.stringify({ message: 'not a fast forward' }), { status: 422 });
       }
@@ -117,6 +128,15 @@ export function installMockGitHubApi({ delayMs = 100 } = {}) {
     armTreesPostedSignal,
     setLostAckOnRefUpdate(v) {
       lostAckOnRefUpdate = v;
+    },
+    setBeforeRefUpdateHook(fn) {
+      beforeRefUpdateHook = fn;
+    },
+    // Raw page file as stored on the remote branch (null if absent).
+    remotePage(title) {
+      const files = treeFiles.get(commitTree.get(refSha));
+      const raw = files.get(`pages/${title}.json`);
+      return raw ? JSON.parse(raw) : null;
     },
     currentRemoteState() {
       const files = treeFiles.get(commitTree.get(refSha));

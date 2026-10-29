@@ -66,6 +66,29 @@ export interface PageChange {
   created?: number;
   updated?: number;
   mergeCandidate?: string;
+  // Compare-and-swap guard: the remote `updated` this change is based on
+  // (null = "this page did not exist remotely when I last looked"). If the
+  // page on the branch we are about to commit onto differs, pushBatch() throws
+  // PushConflictError instead of overwriting it. undefined = no check.
+  expectedUpdated?: number | null;
+  // A remote `updated` that is NOT a conflict even though it differs from
+  // expectedUpdated: our own earlier push that landed without us hearing back.
+  acceptRemoteUpdated?: number;
+}
+
+// Thrown by pushBatch() when a page it was asked to write/delete was changed on
+// the remote after the caller last pulled it. Not retried by commit(): the
+// caller has to pull again (and decide what to do with the other side's edit)
+// before pushing.
+export class PushConflictError extends Error {
+  constructor(public titles: string[]) {
+    super(`remote changed since last pull: ${titles.join(', ')}`);
+    this.name = 'PushConflictError';
+  }
+}
+
+function sameLines(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((line, i) => line === b[i]);
 }
 
 export class GitHubStore {
@@ -200,6 +223,7 @@ export class GitHubStore {
         // Someone else moved the branch between our read and our commit.
         lastError = new Error('branch moved during save');
       } catch (err) {
+        if (err instanceof PushConflictError) throw err;
         lastError = err;
       }
       if (attempt < MAX_COMMIT_ATTEMPTS) {
@@ -237,10 +261,21 @@ export class GitHubStore {
       const entries = await this.readIndexAt(baseCommitSha);
       const entryMap = new Map(entries.map((e) => [e.title, e]));
       const fileChanges: FileChange[] = [];
+      const conflicts: string[] = [];
 
       for (const change of changes) {
         const path = `pages/${slug(change.title)}`;
         if (change.lines === null) {
+          const remoteUpdated = entryMap.get(change.title)?.updated;
+          if (
+            change.expectedUpdated !== undefined &&
+            remoteUpdated !== undefined &&
+            remoteUpdated !== change.expectedUpdated &&
+            remoteUpdated !== change.acceptRemoteUpdated
+          ) {
+            conflicts.push(change.title);
+            continue;
+          }
           // A page created and deleted locally before it was ever synced
           // has no entry here -- and asking git/trees to delete (sha: null)
           // a path that was never in base_tree fails every attempt with
@@ -254,6 +289,19 @@ export class GitHubStore {
         }
         const existingContent = await this.readFileAt(baseCommitSha, path);
         const existing: Page | null = existingContent ? JSON.parse(existingContent) : null;
+        // A page absent on the remote is never a conflict (our edit simply
+        // wins over a delete); a present one must be the version we based
+        // this change on, or have identical content anyway.
+        if (
+          existing &&
+          change.expectedUpdated !== undefined &&
+          existing.updated !== change.expectedUpdated &&
+          existing.updated !== change.acceptRemoteUpdated &&
+          !sameLines(existing.lines, change.lines)
+        ) {
+          conflicts.push(change.title);
+          continue;
+        }
         const record: Page = {
           title: change.title,
           lines: change.lines,
@@ -264,6 +312,8 @@ export class GitHubStore {
         fileChanges.push({ path, content: JSON.stringify(record, null, 2) });
         entryMap.set(change.title, { title: change.title, path, updated: record.updated });
       }
+
+      if (conflicts.length > 0) throw new PushConflictError(conflicts);
 
       fileChanges.push({ path: 'pages/_index.json', content: JSON.stringify([...entryMap.values()], null, 2) });
       return fileChanges;

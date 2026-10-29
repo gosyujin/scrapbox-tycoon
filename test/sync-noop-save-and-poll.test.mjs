@@ -94,7 +94,7 @@ test('an idle poll is a single ref read; a moved branch is pulled and bumps data
   };
 
   await pc.syncNow();
-  assert.equal(calls.length, 2, `expected ref read + display HEAD read, got ${calls.join(', ')}`);
+  assert.equal(calls.length, 1, `expected a single ref read, got ${calls.join(', ')}`);
   assert.ok(calls.every((u) => u.includes('git/ref/heads/main')));
   const versionBefore = pc.getSyncStatus().dataVersion;
 

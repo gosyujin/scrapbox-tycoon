@@ -24,11 +24,21 @@
 // same "don't overwrite, save alongside and let the user merge" mechanism
 // app.ts already uses for rename collisions.
 import { LocalStore } from './local-store.js';
-import { GitHubStore, type GitHubStoreConfig, type PageChange } from './github-store.js';
+import { GitHubStore, PushConflictError, type GitHubStoreConfig, type PageChange } from './github-store.js';
 import type { Page, PageSummary, PageInput, Store, SyncStatus, SyncCapable } from '../types.js';
 
 const SYNC_META_KEY = 'scrapbox_tycoon_sync_meta_v1';
-const AUTO_SYNC_DEBOUNCE_MS = 4000;
+// Short, because the point of syncing is "write on the phone, see it on the PC
+// right away": this is the delay between the last edit and the push.
+const AUTO_SYNC_DEBOUNCE_MS = 2000;
+// How many times one sync re-pulls and re-pushes when the remote moved under a
+// push (PushConflictError). Each pass is deterministic given the remote state,
+// so a few are plenty; beyond that something is writing continuously and the
+// normal failure retry takes over.
+const MAX_SYNC_PASSES = 4;
+const SYNC_LOCK_NAME = 'scrapbox_tycoon_sync';
+// Don't wait forever on a lock held by a tab the OS has frozen.
+const SYNC_LOCK_TIMEOUT_MS = 20000;
 // A failed sync (e.g. GitHub's git/trees occasionally erroring transiently
 // — see GitHubStore) would otherwise sit dirty until the next edit happens
 // to trigger another attempt. Retry once on our own after a delay so a
@@ -147,6 +157,8 @@ export class GitHubSyncStore implements Store, SyncCapable {
     this.meta = readMeta();
     this.status = {
       state: 'idle',
+      phase: 'waiting',
+      conflictCount: 0,
       dirtyCount: this.meta.dirty.length + this.meta.deleted.length,
       lastSyncedAt: null,
       lastSyncedCommitSha: this.meta.lastSyncedCommitSha,
@@ -163,6 +175,23 @@ export class GitHubSyncStore implements Store, SyncCapable {
 
   async getPage(title: string): Promise<Page | null> {
     return this.local.getPage(title);
+  }
+
+  // The sync meta lives in localStorage, which every tab/PWA window of this
+  // origin shares, so this instance's `this.meta` is only a snapshot. Anything
+  // that decides or mutates must go through these two instead of trusting the
+  // in-memory copy: a stale copy written back wipes the other tab's dirty marks
+  // (and makes this tab blind to them).
+  private fresh(): SyncMeta {
+    this.meta = readMeta();
+    return this.meta;
+  }
+
+  private updateMeta(fn: (meta: SyncMeta) => void): void {
+    const meta = readMeta();
+    fn(meta);
+    writeMeta(meta);
+    this.meta = meta;
   }
 
   async savePage(page: PageInput): Promise<void> {
@@ -212,10 +241,37 @@ export class GitHubSyncStore implements Store, SyncCapable {
   async syncNow(): Promise<void> {
     if (this.disposed) return;
     if (this.syncPromise) return this.syncPromise;
-    this.syncPromise = this.runSync().finally(() => {
+    this.syncPromise = this.withCrossTabLock(() => this.runSync()).finally(() => {
       this.syncPromise = null;
     });
     return this.syncPromise;
+  }
+
+  // At most one sync at a time per browser (all tabs/PWA windows), so two
+  // windows never push the same dirty pages against each other. Web Locks is
+  // missing on old browsers -- then it is simply skipped. A holder the OS has
+  // frozen would block us indefinitely, hence the timeout and unlocked fallback
+  // (the compare-and-swap push keeps that fallback safe).
+  private async withCrossTabLock(fn: () => Promise<void>): Promise<void> {
+    const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+    if (!locks || typeof locks.request !== 'function') return fn();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SYNC_LOCK_TIMEOUT_MS);
+    let granted = false;
+    try {
+      return await locks.request(SYNC_LOCK_NAME, { signal: controller.signal }, async () => {
+        granted = true;
+        clearTimeout(timer);
+        await fn();
+      });
+    } catch (err) {
+      // fn()'s own failures propagate as they are; only a timed-out wait for
+      // the lock falls through to an unlocked sync.
+      if (granted || (err as Error).name !== 'AbortError') throw err;
+      return fn();
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // Stops this instance's background sync. Without this, replacing `store`
@@ -250,22 +306,33 @@ export class GitHubSyncStore implements Store, SyncCapable {
       titles.map((title) => ({ title, lines: null })),
       `cleanup: remove ${titles.length} orphaned remote page(s)`
     );
-    for (const title of titles) delete this.meta.lastSyncedUpdated[title];
-    writeMeta(this.meta);
+    this.updateMeta((m) => {
+      for (const title of titles) delete m.lastSyncedUpdated[title];
+    });
+  }
+
+  // Status patch after an edit is queued: back to "waiting to send" unless a
+  // sync is running right now (that one keeps its own phase; the edit is picked
+  // up by the next).
+  private queuedStatus(): Partial<SyncStatus> {
+    const dirtyCount = this.meta.dirty.length + this.meta.deleted.length;
+    return this.status.state === 'syncing' ? { dirtyCount } : { dirtyCount, phase: 'waiting' };
   }
 
   private markDirty(title: string): void {
-    if (!this.meta.dirty.includes(title)) this.meta.dirty.push(title);
-    this.meta.deleted = this.meta.deleted.filter((t) => t !== title);
-    writeMeta(this.meta);
-    this.setStatus({ dirtyCount: this.meta.dirty.length + this.meta.deleted.length });
+    this.updateMeta((m) => {
+      if (!m.dirty.includes(title)) m.dirty.push(title);
+      m.deleted = m.deleted.filter((t) => t !== title);
+    });
+    this.setStatus(this.queuedStatus());
   }
 
   private markDeleted(title: string): void {
-    this.meta.dirty = this.meta.dirty.filter((t) => t !== title);
-    if (!this.meta.deleted.includes(title)) this.meta.deleted.push(title);
-    writeMeta(this.meta);
-    this.setStatus({ dirtyCount: this.meta.dirty.length + this.meta.deleted.length });
+    this.updateMeta((m) => {
+      m.dirty = m.dirty.filter((t) => t !== title);
+      if (!m.deleted.includes(title)) m.deleted.push(title);
+    });
+    this.setStatus(this.queuedStatus());
   }
 
   private scheduleSync(delayMs: number = AUTO_SYNC_DEBOUNCE_MS): void {
@@ -280,15 +347,27 @@ export class GitHubSyncStore implements Store, SyncCapable {
     this.debounceTimer = setTimeout(() => void this.syncNow().catch(() => {}), delayMs);
   }
 
-  private setStatus(patch: Partial<SyncStatus>): void {
+  // `log: false` for transitions that would only add noise to the debug log
+  // (phase changes inside a sync, and the start of a poll that turns out to
+  // have nothing to do -- at one poll per 10s they would push the history that
+  // matters out of the capped log within minutes).
+  private setStatus(patch: Partial<SyncStatus>, log = true): void {
     this.status = { ...this.status, ...patch };
-    appendSyncLog({
+    if (log) this.logStatus();
+    for (const listener of this.listeners) listener(this.status);
+  }
+
+  private logStatus(): void {
+    const entry: SyncLogEntry = {
       t: Date.now(),
       state: this.status.state,
       dirtyCount: this.status.dirtyCount,
       lastError: this.status.lastError,
-    });
-    for (const listener of this.listeners) listener(this.status);
+    };
+    const last = readSyncLog().at(-1);
+    // An idle poll that finds nothing: don't repeat the identical "idle" line.
+    if (last && last.state === 'idle' && entry.state === 'idle' && last.dirtyCount === entry.dirtyCount && last.lastError === entry.lastError) return;
+    appendSyncLog(entry);
   }
 
   getStatusLogText(): string {
@@ -305,36 +384,55 @@ export class GitHubSyncStore implements Store, SyncCapable {
 
   private async runSync(): Promise<void> {
     clearTimeout(this.debounceTimer);
-    this.setStatus({ state: 'syncing' });
+    this.setStatus({ state: 'syncing', phase: 'starting' }, false);
     try {
-      const headBefore = await this.remote.getHeadCommitSha();
-      const hasLocalChanges = this.meta.dirty.length > 0 || this.meta.deleted.length > 0;
       let changedLocal = false;
-      if (hasLocalChanges || headBefore !== this.meta.lastPulledHeadSha) {
-        changedLocal = await this.pull();
-        this.meta.lastPulledHeadSha = headBefore;
-        await this.push();
+      let touchedRemote = false;
+      let head = '';
+      // pull -> push is one logical step, but the remote can move between
+      // the two. push() verifies that (compare-and-swap against the page
+      // versions this pass pulled) and throws PushConflictError instead of
+      // overwriting; we then pull again, which stashes/adopts the other
+      // side's change, and push again.
+      for (let pass = 1; ; pass++) {
+        head = await this.remote.getHeadCommitSha();
+        const meta = this.fresh();
+        const hasLocalChanges = meta.dirty.length > 0 || meta.deleted.length > 0;
+        if (!hasLocalChanges && head === meta.lastPulledHeadSha) break; // idle poll: nothing to do
+        if (!touchedRemote) this.logStatus(); // real work: record that a sync started
+        touchedRemote = true;
+        this.setStatus({ phase: 'pulling' }, false);
+        if (await this.pull()) changedLocal = true;
+        this.updateMeta((m) => {
+          m.lastPulledHeadSha = head;
+        });
+        try {
+          await this.push();
+          break;
+        } catch (err) {
+          if (!(err instanceof PushConflictError) || pass >= MAX_SYNC_PASSES) throw err;
+        }
       }
-      // Read HEAD fresh rather than reusing whatever pull()/push() last saw:
-      // a pull-only sync (nothing local to push) still lands on whatever
-      // another device most recently committed, and this is purely a
-      // display value, not something conflict logic depends on, so one
-      // extra cheap read here is simpler than threading the sha through
-      // both methods' different code paths.
-      this.meta.lastSyncedCommitSha = await this.remote.getHeadCommitSha();
-      writeMeta(this.meta);
+      // Display value only. When this sync touched the remote, HEAD may have
+      // moved (our own push), so read it again; an idle poll already has it.
+      const lastSyncedCommitSha = touchedRemote ? await this.remote.getHeadCommitSha() : head;
+      this.updateMeta((m) => {
+        m.lastSyncedCommitSha = lastSyncedCommitSha;
+      });
       this.retryScheduled = false;
+      const conflictCount = (await this.local.listPages()).filter((p) => isSyncConflictTitle(p.title)).length;
       this.setStatus({
         state: 'idle',
+        phase: conflictCount > 0 ? 'conflict' : 'done',
+        conflictCount,
         dirtyCount: this.meta.dirty.length + this.meta.deleted.length,
         lastSyncedAt: Math.floor(Date.now() / 1000),
-        lastSyncedCommitSha: this.meta.lastSyncedCommitSha,
+        lastSyncedCommitSha,
         lastError: null,
         dataVersion: this.status.dataVersion + (changedLocal ? 1 : 0),
       });
     } catch (err) {
-      writeMeta(this.meta);
-      this.setStatus({ state: 'error', lastError: (err as Error).message });
+      this.setStatus({ state: 'error', phase: 'error', lastError: (err as Error).message, dirtyCount: this.fresh().dirty.length + this.meta.deleted.length });
       if (!this.retryScheduled && !this.disposed) {
         this.retryScheduled = true;
         this.debounceTimer = setTimeout(() => {
@@ -355,15 +453,23 @@ export class GitHubSyncStore implements Store, SyncCapable {
   // title, so the existing rename-collision banner (see app.ts) lets the
   // user merge it in whenever they notice.
   private async stashConflictIfDiverged(title: string, remoteUpdated: number): Promise<boolean> {
-    const knownRemoteUpdated = this.meta.lastSyncedUpdated[title];
-    if (knownRemoteUpdated === undefined || knownRemoteUpdated === remoteUpdated) return false;
-    if (this.meta.conflictSeen[title] === remoteUpdated) return false; // already stashed this exact divergence
+    // A conflict copy is a disposable scratch page. Stashing the other side of
+    // a conflict copy would make "X (sync conflict) (sync conflict)" and so on
+    // without end; for these the later push simply wins.
+    if (isSyncConflictTitle(title)) return false;
+    const meta = this.fresh();
+    // undefined = never synced this title: a page created locally whose title
+    // also exists remotely (made on another device) is a divergence too.
+    if (meta.lastSyncedUpdated[title] === remoteUpdated) return false;
+    if (meta.conflictSeen[title] === remoteUpdated) return false; // already stashed this exact divergence
     // The remote's `updated` is exactly what we were mid-way through pushing:
     // that commit landed but its acknowledgement never reached us (see
     // SyncMeta.pendingPush). It's our own write, not a divergence.
-    if (this.meta.pendingPush[title] === remoteUpdated) {
-      this.meta.lastSyncedUpdated[title] = remoteUpdated;
-      delete this.meta.pendingPush[title];
+    if (meta.pendingPush[title] === remoteUpdated) {
+      this.updateMeta((m) => {
+        m.lastSyncedUpdated[title] = remoteUpdated;
+        delete m.pendingPush[title];
+      });
       return false;
     }
     const remotePage = await this.remote.getPage(title);
@@ -373,7 +479,9 @@ export class GitHubSyncStore implements Store, SyncCapable {
     // conflict, whatever its timestamp says.
     const localPage = await this.local.getPage(title);
     if (localPage && sameLines(localPage.lines, remotePage.lines)) {
-      this.meta.lastSyncedUpdated[title] = remoteUpdated;
+      this.updateMeta((m) => {
+        m.lastSyncedUpdated[title] = remoteUpdated;
+      });
       return false;
     }
     const conflictTitle = await this.uniqueConflictTitle(`${title}${SYNC_CONFLICT_SUFFIX}`);
@@ -390,7 +498,13 @@ export class GitHubSyncStore implements Store, SyncCapable {
       mergeCandidate: title,
     });
     this.markDirty(conflictTitle); // so this same sync's push() also lands it on the remote
-    this.meta.conflictSeen[title] = remoteUpdated;
+    // We have now seen (and preserved) the remote version, so our push is
+    // based on it: record it as the synced base, which is also what lets
+    // push()'s compare-and-swap accept our overwrite.
+    this.updateMeta((m) => {
+      m.conflictSeen[title] = remoteUpdated;
+      m.lastSyncedUpdated[title] = remoteUpdated;
+    });
     return true;
   }
 
@@ -408,32 +522,41 @@ export class GitHubSyncStore implements Store, SyncCapable {
     const remoteEntries = await this.remote.listPages();
 
     for (const entry of remoteEntries) {
-      // Checked live (not a Set snapshotted before the listPages() round
-      // trip above) so a markDirty() that lands *during* that await -- e.g.
-      // the user starts another merge while this pull is still in flight --
-      // is still honored: without this, a remote copy fetched a moment
-      // later here could overwrite that brand-new local edit before it's
-      // ever pushed.
-      if (this.meta.dirty.includes(entry.title)) {
+      // Meta is re-read per entry (not snapshotted before the listPages()
+      // round trip above) so a markDirty() that lands *during* that await --
+      // e.g. the user starts another merge while this pull is still in
+      // flight, or another tab edits -- is still honored: without this, a
+      // remote copy fetched a moment later here could overwrite that
+      // brand-new local edit before it's ever pushed.
+      const meta = this.fresh();
+      if (meta.dirty.includes(entry.title)) {
         if (await this.stashConflictIfDiverged(entry.title, entry.updated)) changed = true;
         continue; // our local edit still wins on push for this title
       }
-      if (this.meta.lastSyncedUpdated[entry.title] === entry.updated) continue; // unchanged
+      if (meta.lastSyncedUpdated[entry.title] === entry.updated) continue; // unchanged
       const remotePage = await this.remote.getPage(entry.title);
       if (remotePage) {
         await this.local.savePage(remotePage);
-        this.meta.lastSyncedUpdated[entry.title] = remotePage.updated;
+        this.updateMeta((m) => {
+          m.lastSyncedUpdated[entry.title] = remotePage.updated;
+          // Deleted here but edited elsewhere since: the edit wins. Keeping the
+          // pending delete would make push() erase that edit from the remote.
+          m.deleted = m.deleted.filter((t) => t !== entry.title);
+        });
         changed = true;
       }
     }
 
     const remoteTitles = new Set(remoteEntries.map((e) => e.title));
-    for (const title of Object.keys(this.meta.lastSyncedUpdated)) {
-      if (remoteTitles.has(title) || this.meta.dirty.includes(title) || this.meta.deleted.includes(title)) continue;
+    for (const title of Object.keys(this.fresh().lastSyncedUpdated)) {
+      const meta = this.fresh();
+      if (remoteTitles.has(title) || meta.dirty.includes(title) || meta.deleted.includes(title)) continue;
       // Known to us before, gone from the remote now, and not something we
       // deleted ourselves -> another device deleted it.
       await this.local.deletePage(title);
-      delete this.meta.lastSyncedUpdated[title];
+      this.updateMeta((m) => {
+        delete m.lastSyncedUpdated[title];
+      });
       changed = true;
     }
     return changed;
@@ -454,44 +577,58 @@ export class GitHubSyncStore implements Store, SyncCapable {
     // pages/_index.json drifted from the real page list after doing
     // several merges back to back. LocalStore has no comparable network
     // delay, which is why this never reproduced without GitHub involved.
-    const dirtyTitles = [...this.meta.dirty];
-    const deletedTitles = [...this.meta.deleted];
+    const snapshot = this.fresh();
+    const dirtyTitles = [...snapshot.dirty];
+    const deletedTitles = [...snapshot.deleted];
+
+    // Every change carries the remote version it is based on, so pushBatch()
+    // can refuse (PushConflictError) to overwrite a page that changed after
+    // pull(). Conflict copies are exempt: they are disposable, last push wins.
+    const guard = (title: string): Pick<PageChange, 'expectedUpdated' | 'acceptRemoteUpdated'> =>
+      isSyncConflictTitle(title)
+        ? {}
+        : { expectedUpdated: snapshot.lastSyncedUpdated[title] ?? null, acceptRemoteUpdated: snapshot.pendingPush[title] };
 
     const changes: PageChange[] = [];
     for (const title of dirtyTitles) {
       const page = await this.local.getPage(title);
-      if (page) changes.push({ title, lines: page.lines, created: page.created, updated: page.updated, mergeCandidate: page.mergeCandidate });
+      if (page) changes.push({ title, lines: page.lines, created: page.created, updated: page.updated, mergeCandidate: page.mergeCandidate, ...guard(title) });
     }
     for (const title of deletedTitles) {
-      changes.push({ title, lines: null });
+      // A page that never reached the remote has nothing to compare against.
+      changes.push({ title, lines: null, ...(snapshot.lastSyncedUpdated[title] === undefined ? {} : guard(title)) });
     }
     if (changes.length === 0) return;
 
-    for (const change of changes) {
-      if (change.lines !== null && change.updated !== undefined) this.meta.pendingPush[change.title] = change.updated;
-    }
-    writeMeta(this.meta);
+    this.updateMeta((m) => {
+      for (const change of changes) {
+        if (change.lines !== null && change.updated !== undefined) m.pendingPush[change.title] = change.updated;
+      }
+    });
 
+    this.setStatus({ phase: 'pushing' }, false);
     await this.remote.pushBatch(changes, `sync: ${changes.length} page(s)`);
 
-    for (const change of changes) {
-      delete this.meta.pendingPush[change.title];
-      if (change.lines === null) {
-        delete this.meta.lastSyncedUpdated[change.title];
-      } else {
-        this.meta.lastSyncedUpdated[change.title] = change.updated ?? Math.floor(Date.now() / 1000);
-      }
-    }
     // Only drop the titles this push actually sent -- anything
     // markDirty()/markDeleted() added since the snapshot above stays
     // queued for the next sync instead of being silently discarded.
     const pushedDirty = new Set(dirtyTitles);
     const pushedDeleted = new Set(deletedTitles);
-    this.meta.dirty = this.meta.dirty.filter((t) => !pushedDirty.has(t));
-    this.meta.deleted = this.meta.deleted.filter((t) => !pushedDeleted.has(t));
-    // The divergence that triggered a stashed conflict is resolved once our
-    // own push for that title actually lands -- lastSyncedUpdated above is
-    // about to be reset to it, so any future divergence is a new one.
-    for (const title of dirtyTitles) delete this.meta.conflictSeen[title];
+    this.updateMeta((m) => {
+      for (const change of changes) {
+        delete m.pendingPush[change.title];
+        if (change.lines === null) {
+          delete m.lastSyncedUpdated[change.title];
+        } else {
+          m.lastSyncedUpdated[change.title] = change.updated ?? Math.floor(Date.now() / 1000);
+        }
+      }
+      m.dirty = m.dirty.filter((t) => !pushedDirty.has(t));
+      m.deleted = m.deleted.filter((t) => !pushedDeleted.has(t));
+      // The divergence that triggered a stashed conflict is resolved once our
+      // own push for that title actually lands -- lastSyncedUpdated above is
+      // about to be reset to it, so any future divergence is a new one.
+      for (const title of dirtyTitles) delete m.conflictSeen[title];
+    });
   }
 }

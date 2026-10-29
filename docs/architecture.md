@@ -15,7 +15,7 @@
   衝突し続けるとここで諦めて `Could not save after 8 attempts: branch moved
   during save` を投げる。
 - `src/store/github-sync-store.ts` — 編集を即座に `LocalStore` に書き、
-  デバウンス (`AUTO_SYNC_DEBOUNCE_MS = 4000`) してから `GitHubStore` へ
+  デバウンス (`AUTO_SYNC_DEBOUNCE_MS = 2000`) してから `GitHubStore` へ
   まとめて push する本体。失敗時は `RETRY_AFTER_FAILURE_MS = 15000` 後に
   自動リトライ (self-healing)。フッターの同期状態表示・デバッグログの
   ソースでもある。

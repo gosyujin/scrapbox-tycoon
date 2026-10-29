@@ -33,8 +33,23 @@ export interface Store {
   renamePage(oldTitle: string, newTitle: string): Promise<void>;
 }
 
+// Finer-grained than SyncStatus.state, for the badge. In order of a normal sync:
+//   waiting  - nothing started: never synced yet, or local edits queued for the
+//              debounce timer
+//   starting - a sync has begun and is asking GitHub where the branch is
+//   pulling  - fetching other devices' changes
+//   pushing  - sending this device's changes
+//   done     - finished, nothing to look at
+//   conflict - finished, but "(sync conflict)" pages still need a human
+//   error    - the last attempt failed (a retry is scheduled)
+export type SyncPhase = 'waiting' | 'starting' | 'pulling' | 'pushing' | 'done' | 'conflict' | 'error';
+
 export interface SyncStatus {
   state: 'idle' | 'syncing' | 'error';
+  phase: SyncPhase;
+  // Number of unresolved "(sync conflict)" pages in the local store, as of the
+  // end of the last successful sync.
+  conflictCount: number;
   dirtyCount: number;
   lastSyncedAt: number | null;
   // The remote branch's HEAD commit sha as observed right after the last
