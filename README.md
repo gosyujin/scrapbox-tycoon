@@ -9,6 +9,7 @@ GitHub リポジトリ (`gosyujin/scrapbox-tycoon-notes`) にまとめてコミ�
 
 - Scrapbox 記法のページ編集 (CodeMirror 6: クリックした行だけ記法が展開される)、ページ一覧のカード表示
 - ローカルファースト保存 (localStorage) と GitHub へのバックグラウンド同期
+- テロメア (行ごとの最終編集時刻を左端のバーの濃さで表示)
 - 同期ステータス履歴のコピー (デバッグ用)
 - 同期競合の退避 (「(sync conflict)」ページ) と競合バナー・行単位 diff
 - 追加ボタンと検索フォームを画面下のフッターに固定 (gyazo-tycoon-viewer と同じレイアウト)

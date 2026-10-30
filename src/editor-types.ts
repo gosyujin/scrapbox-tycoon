@@ -4,6 +4,9 @@
 export interface EditorOptions {
   container: HTMLElement;
   lines: string[];
+  // When each line was last edited (unix seconds), parallel to `lines`; drives
+  // the left-edge telomere bar (cm-editor/telomere.ts).
+  lineTimes: number[];
   // Fires once when the editor loses focus (blur/commit) -- NOT per
   // keystroke. See docs/decisions/04-empty-page-title-desync.md.
   onChange: (lines: string[]) => void | Promise<void>;

@@ -9,5 +9,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": [".", "../src/outline.ts", "../src/parser.ts", "../src/editor-types.ts"]
+  "include": [".", "../src/outline.ts", "../src/parser.ts", "../src/line-times.ts", "../src/editor-types.ts"]
 }

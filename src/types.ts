@@ -3,6 +3,11 @@ export interface Page {
   lines: string[];
   created: number;
   updated: number;
+  // When each line was last edited (unix seconds), parallel to `lines` -- the
+  // source of the editor's left-edge "telomere" bar (see line-times.ts).
+  // Optional: records saved before this existed lack it, and readers then
+  // treat every line as last edited at `updated`.
+  lineTimes?: number[];
   // Set when this page was auto-created to avoid overwriting an
   // already-existing page of the same title (see app.ts's rename handling).
   // Names the other page it may want to be merged into, shown as a
@@ -18,12 +23,14 @@ export interface PageSummary {
 // created/updated are optional on write: omit them to let the store fill
 // them in (now for a fresh page, or preserved from the existing record);
 // pass them explicitly (e.g. from a Scrapbox import) to keep original dates.
+// lineTimes: omit to carry the existing times over for unchanged lines (new or
+// edited lines get `updated`/now); pass it to store exactly those times (sync).
 // mergeCandidate: omit to leave whatever is already stored untouched, a
 // string to set it, or null to explicitly clear it (e.g. dismissing the
 // banner) — unlike created/updated, an ordinary edit should not silently
 // wipe it just by not mentioning it.
 export type PageInput = Pick<Page, 'title' | 'lines'> &
-  Partial<Pick<Page, 'created' | 'updated'>> & { mergeCandidate?: string | null };
+  Partial<Pick<Page, 'created' | 'updated' | 'lineTimes'>> & { mergeCandidate?: string | null };
 
 export interface Store {
   listPages(): Promise<PageSummary[]>;

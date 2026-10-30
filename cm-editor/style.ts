@@ -18,6 +18,19 @@ export const EDITOR_CSS = `
 .sbe .cm-line.sbe-title { font-size: 1.35em; font-weight: 700; line-height: 1.4; padding-bottom: 0.35em; }
 .sbe .sbe-syntax { color: var(--muted); font-weight: normal; }
 
+/* Telomere: a bar at the left edge of each line, fainter the longer ago the
+   line was last edited (levels: <1h, <1d, <1w, <30d, <1y, older). */
+.sbe .cm-gutters { background: transparent; border: none; color: inherit; }
+.sbe .sbe-telomere { width: 4px; margin-right: 2px; }
+.sbe .sbe-telomere .cm-gutterElement { display: flex; padding: 0; }
+.sbe .sbe-tl { display: block; width: 3px; height: 100%; border-radius: 2px; background: var(--link); }
+.sbe .sbe-tl-0 { opacity: 1; }
+.sbe .sbe-tl-1 { opacity: 0.7; }
+.sbe .sbe-tl-2 { opacity: 0.5; }
+.sbe .sbe-tl-3 { opacity: 0.32; }
+.sbe .sbe-tl-4 { opacity: 0.18; }
+.sbe .sbe-tl-5 { opacity: 0.08; }
+
 /* Outline indent: one cell per leading whitespace character (on the active
    line too, so expanding a line never shifts its text), a bullet in the last
    cell, and wrapped lines hang under the text. */

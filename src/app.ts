@@ -17,6 +17,7 @@ import {
   getAllTitles as getAllReferenceTitles,
   type SortKey as ReferenceSortKey,
 } from './store/reference-store.js';
+import { normalizeLineTimes, reconcileLineTimes } from './line-times.js';
 import { makeVisitTracker } from './visit-tracking.js';
 import { matchQuery } from './search.js';
 import type { Page, Store, SyncCapable, SyncPhase, SyncStatus } from './types.js';
@@ -1047,6 +1048,7 @@ async function renderPage(title: string): Promise<void> {
   new Editor({
     container: editorEl,
     lines: page.lines,
+    lineTimes: normalizeLineTimes(page.lines, page.lineTimes, isNew ? Math.floor(Date.now() / 1000) : page.updated),
     knownTitles,
     fallback: { linkBase: '#/ref/', knownTitles: referenceTitles },
     onExtractPage: async (extractedTitle, extractedLines) => {
@@ -1084,7 +1086,13 @@ async function renderPage(title: string): Promise<void> {
         }
       }
 
-      await store.savePage({ title: newTitle, lines, ...(mergeCandidate ? { mergeCandidate } : {}) });
+      // Carry per-line times over from the page as rendered, so a rename
+      // (saved under a new title, where the store has no previous record)
+      // keeps them. A brand-new page has nothing to carry.
+      const lineTimes = isNew
+        ? undefined
+        : reconcileLineTimes(page.lines, normalizeLineTimes(page.lines, page.lineTimes, page.updated), lines, Math.floor(Date.now() / 1000));
+      await store.savePage({ title: newTitle, lines, ...(lineTimes ? { lineTimes } : {}), ...(mergeCandidate ? { mergeCandidate } : {}) });
 
       if (newTitle !== currentTitle) {
         if (existsLocally) await store.deletePage(currentTitle);

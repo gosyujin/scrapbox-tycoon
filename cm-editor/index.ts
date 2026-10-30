@@ -27,6 +27,7 @@ import {
 } from './commands';
 import { keyboardAware } from './mobile';
 import { selectionPopup } from './popup';
+import { telomere } from './telomere';
 import { EDITOR_CSS } from './style';
 import { wrapSelection } from './format';
 
@@ -127,6 +128,7 @@ export function createEditor(opts: EditorOptions): void {
         EditorView.lineWrapping,
         EditorView.contentAttributes.of({ spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off' }),
         liveRender,
+        telomere(opts.lineTimes),
         selectionPopup((v) => void extract(v)),
         keyboardAware,
         EditorView.updateListener.of((u) => {

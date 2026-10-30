@@ -19,7 +19,7 @@
 //
 // Layout in the repo:
 //   pages/_index.json -> [{title, path, updated}, ...]
-//   pages/<title>.json -> {title, lines, created, updated}
+//   pages/<title>.json -> {title, lines, created, updated, lineTimes?}
 import type { Page, PageSummary } from '../types.js';
 
 const API = 'https://api.github.com';
@@ -65,6 +65,7 @@ export interface PageChange {
   lines: string[] | null; // null = delete this page
   created?: number;
   updated?: number;
+  lineTimes?: number[];
   mergeCandidate?: string;
   // Compare-and-swap guard: the remote `updated` this change is based on
   // (null = "this page did not exist remotely when I last looked"). If the
@@ -350,6 +351,7 @@ export class GitHubStore {
           lines: change.lines,
           created: change.created ?? (existing ? existing.created : now),
           updated: change.updated ?? now,
+          ...(change.lineTimes ? { lineTimes: change.lineTimes } : {}),
           ...(change.mergeCandidate !== undefined ? { mergeCandidate: change.mergeCandidate } : {}),
         };
         fileChanges.push({ path, content: JSON.stringify(record, null, 2) });

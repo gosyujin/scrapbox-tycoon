@@ -1,6 +1,7 @@
 // LocalStorage-backed store. Same interface as GitHubStore, used for
 // instant local demo/dev without any GitHub repo or token.
 import type { Page, PageSummary, PageInput, Store } from '../types.js';
+import { normalizeLineTimes, reconcileLineTimes } from '../line-times.js';
 
 const KEY = 'scrapbox_tycoon_pages_v1';
 
@@ -25,8 +26,9 @@ export class LocalStore implements Store {
   }
 
   async getPage(title: string): Promise<Page | null> {
-    const pages = readAll();
-    return pages[title] || null;
+    const page = readAll()[title];
+    // Always hand out a full lineTimes (older records have none).
+    return page ? { ...page, lineTimes: normalizeLineTimes(page.lines, page.lineTimes, page.updated) } : null;
   }
 
   // Titles of the pages matching `predicate`, from a single read of storage.
@@ -42,11 +44,19 @@ export class LocalStore implements Store {
     const existing = pages[page.title];
     const mergeCandidate =
       page.mergeCandidate === null ? undefined : page.mergeCandidate !== undefined ? page.mergeCandidate : existing?.mergeCandidate;
+    const updated = page.updated ?? now;
+    const lineTimes =
+      page.lineTimes && page.lineTimes.length === page.lines.length
+        ? page.lineTimes
+        : existing
+          ? reconcileLineTimes(existing.lines, normalizeLineTimes(existing.lines, existing.lineTimes, existing.updated), page.lines, updated)
+          : page.lines.map(() => updated);
     pages[page.title] = {
       title: page.title,
       lines: page.lines,
       created: page.created ?? (existing ? existing.created : now),
-      updated: page.updated ?? now,
+      updated,
+      lineTimes,
       ...(mergeCandidate !== undefined ? { mergeCandidate } : {}),
     };
     writeAll(pages);

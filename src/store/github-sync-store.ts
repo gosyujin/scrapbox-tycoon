@@ -26,6 +26,7 @@
 import { LocalStore } from './local-store.js';
 import { GitHubStore, PushConflictError, type GitHubStoreConfig, type PageChange, type RemoteSnapshot } from './github-store.js';
 import { commonLines, hasConflictMarkers, merge3 } from '../merge.js';
+import { mergeLineTimes, normalizeLineTimes } from '../line-times.js';
 import type { Page, PageSummary, PageInput, Store, SyncStatus, SyncCapable } from '../types.js';
 
 const SYNC_META_KEY = 'scrapbox_tycoon_sync_meta_v1';
@@ -514,9 +515,18 @@ export class GitHubSyncStore implements Store, SyncCapable {
       adoptAsBase();
       return true;
     }
+    const now = Math.floor(Date.now() / 1000);
     await this.local.savePage({
       title,
       lines,
+      lineTimes: mergeLineTimes(
+        lines,
+        [
+          { lines: localPage.lines, times: normalizeLineTimes(localPage.lines, localPage.lineTimes, localPage.updated) },
+          { lines: remotePage.lines, times: normalizeLineTimes(remotePage.lines, remotePage.lineTimes, remotePage.updated) },
+        ],
+        now
+      ),
       created: remotePage.created,
       // Deterministic and strictly newer than both inputs, so every device
       // that merges the same pair writes the same record (and nobody mistakes
@@ -638,7 +648,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
     const changes: PageChange[] = [];
     for (const title of dirtyTitles) {
       const page = await this.local.getPage(title);
-      if (page) changes.push({ title, lines: page.lines, created: page.created, updated: page.updated, mergeCandidate: page.mergeCandidate, ...guard(title) });
+      if (page) changes.push({ title, lines: page.lines, created: page.created, updated: page.updated, lineTimes: page.lineTimes, mergeCandidate: page.mergeCandidate, ...guard(title) });
     }
     for (const title of deletedTitles) {
       // A page that never reached the remote has nothing to compare against.
