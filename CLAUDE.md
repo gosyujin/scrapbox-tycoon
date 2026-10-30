@@ -83,11 +83,11 @@
 - 同期層 (`github-sync-store.ts` / `github-store.ts`) 全般: [docs/technical-notes.md](docs/technical-notes.md), [docs/architecture.md](docs/architecture.md)
   - 内部で fire-and-forget する Promise (`void this.syncNow()` 等) には必ず `.catch()` を付ける (付けないと処理済みの失敗が unhandled rejection になる)。
   - `GitHubStore` の全 `fetch()` に `cache: 'no-store'` を付ける (ref 読み取りが最大60秒キャッシュされ、`pull()` が自分の書き込みを他デバイスの変更と誤認してローカルを巻き戻す)。
-  - `pull()` は dirty なページでも remote の `updated` が `lastSyncedUpdated` と食い違えば `stashConflictIfDiverged()` で「(sync conflict)」ページに退避する (負けた側の編集を無言で消さない)。`meta.conflictSeen` で再送時の複製を防ぐ。
+  - `pull()` は dirty なページでも remote の `updated` が `lastSyncedUpdated` と食い違えば `mergeDiverged()` で 3-way マージする (基準版は `meta.baseCommit[title]` のコミットから `getPageAt()` で取得。無ければ `commonLines()`)。**「(sync conflict)」コピーページはもう作らない** (配られて複数端末で同時に解消され、解消自体が新しい競合になったため)。同じ行の衝突は `merge.ts` のマーカーでページ内に残す。マージは対称・決定的でなければならない (マーカーに端末名/時刻を入れない、両側は `updated` 順) — 2台が同じ食い違いをマージしても同一内容になるのが収束の条件。 → [decisions/13](docs/decisions/13-three-way-merge-in-page-markers.md)
   - `push()` の各変更は `expectedUpdated` (最後に見た remote の `updated`) を持ち、`pushBatch()` が commit 試行ごとに照合して食い違えば `PushConflictError` を投げる (`runSync()` が再 pull → 再 push、最大4回)。`meta` は他タブと共有の localStorage なので、判断・更新は必ず `fresh()` / `updateMeta()` 経由 (インスタンスの `this.meta` を直接書き戻さない)。`(sync conflict)` コピー自体は競合判定の対象外。 → [decisions/12](docs/decisions/12-sync-cas-push.md)
   - `push()` は `pushBatch()` の前に `meta.pendingPush` を永続化する (応答が届かなかった自分の push を競合と誤認しないため)。remote とローカルの `lines` が同一なら競合扱いにしない。
   - `savePage()` は既存と同一内容なら no-op (blur の度に呼ばれる `onChange` が無変更ページを dirty にして偽の競合を作るため)。pull 省略用の `lastPulledHeadSha` は pull「前」に読んだ HEAD を保存する。 → [decisions/09](docs/decisions/09-noop-save-conflict-and-polling.md)
-  - `(sync conflict)` コピーは stash 時に `lines[0]` をコピー自身のタイトルに書き換える (ページの identity は `lines[0]` と一致している前提)。
+  - 旧版が作った `(sync conflict)` コピーは残っているので、`isSyncConflictTitle()` は競合判定の対象外 (後の push が勝つ) として残している。`lines[0]` はページの identity: マージ対象から除外し、マーカーが 1 行目に来ないようにしている。
 - ページ編集・タイトル処理 (`app.ts` の `onChange` / `editor.ts` / `cm-editor/`): [docs/technical-notes.md](docs/technical-notes.md), [decisions/11](docs/decisions/11-codemirror-editor.md)
   - `cm-editor/` は tsc の対象外 (bare import を解決できないため)。esbuild で `js/cm-editor.js` にバンドルされ、`src/editor.ts` が `import('./cm-editor.js?v=…')` で遅延ロードする。ここを `src/` に移したり、静的 import にしない。
   - エディタの CSS は `.sbe` 配下 / `sbe-` 接頭辞のみ (`cm-editor/style.ts`)。parser.ts と共通の装飾クラス (`sb-h1` 等) は style.css 側で定義済みなので再定義しない。

@@ -91,6 +91,33 @@ function sameLines(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((line, i) => line === b[i]);
 }
 
+export class RemoteSnapshot {
+  private tree: Promise<Map<string, string>> | null = null;
+
+  constructor(
+    readonly commitSha: string,
+    private loadTree: () => Promise<Map<string, string>>,
+    private loadBlob: (blobSha: string) => Promise<string>
+  ) {}
+
+  private async read(path: string): Promise<string | null> {
+    this.tree ??= this.loadTree();
+    const blobSha = (await this.tree).get(path);
+    return blobSha ? this.loadBlob(blobSha) : null;
+  }
+
+  async listPages(): Promise<PageSummary[]> {
+    const content = await this.read('pages/_index.json');
+    const entries: IndexEntry[] = content ? JSON.parse(content) : [];
+    return entries.map((e) => ({ title: e.title, updated: e.updated })).sort((a, b) => b.updated - a.updated);
+  }
+
+  async getPage(title: string): Promise<Page | null> {
+    const content = await this.read(`pages/${slug(title)}`);
+    return content ? JSON.parse(content) : null;
+  }
+}
+
 export class GitHubStore {
   private owner: string;
   private repo: string;
@@ -186,7 +213,7 @@ export class GitHubStore {
   // occasionally failing transiently (e.g. "GitRPC::BadObjectState") —
   // observed in practice to succeed when the identical request is simply
   // retried.
-  private async commit(message: string, buildChanges: (baseCommitSha: string) => Promise<FileChange[]>): Promise<void> {
+  private async commit(message: string, buildChanges: (baseCommitSha: string) => Promise<FileChange[]>): Promise<string> {
     let lastError: unknown;
     for (let attempt = 1; attempt <= MAX_COMMIT_ATTEMPTS; attempt++) {
       try {
@@ -216,7 +243,7 @@ export class GitHubStore {
           cache: 'no-store',
           body: JSON.stringify({ sha: newCommit.sha, force: false }),
         });
-        if (updateRes.ok) return;
+        if (updateRes.ok) return newCommit.sha;
         if (updateRes.status !== 409 && updateRes.status !== 422) {
           throw new Error(`GitHub ref update failed: ${updateRes.status} ${await updateRes.text()}`);
         }
@@ -241,23 +268,39 @@ export class GitHubStore {
     return this.currentBranchCommit();
   }
 
+  // A read-only view of the whole page set at ONE commit. Everything read
+  // through it -- the index and every page -- comes from the same tree, so a
+  // pull cannot mix versions from two different moments (and it fetches that
+  // tree once instead of once per page).
+  snapshotAt(commitSha: string): RemoteSnapshot {
+    return new RemoteSnapshot(commitSha, () => this.treeAt(commitSha), (sha) => this.blobContent(sha));
+  }
+
+  async snapshot(): Promise<RemoteSnapshot> {
+    return this.snapshotAt(await this.currentBranchCommit());
+  }
+
   async listPages(): Promise<PageSummary[]> {
-    const entries = await this.readIndexAt(await this.currentBranchCommit());
-    return entries.map((e) => ({ title: e.title, updated: e.updated })).sort((a, b) => b.updated - a.updated);
+    return (await this.snapshot()).listPages();
   }
 
   async getPage(title: string): Promise<Page | null> {
-    const content = await this.readFileAt(await this.currentBranchCommit(), `pages/${slug(title)}`);
-    return content ? JSON.parse(content) : null;
+    return (await this.snapshot()).getPage(title);
+  }
+
+  // The page as it was at an older commit (the base of a three-way merge).
+  async getPageAt(commitSha: string, title: string): Promise<Page | null> {
+    return this.snapshotAt(commitSha).getPage(title);
   }
 
   // Writes many pages (and/or deletes) in ONE commit — used to push a batch
   // of locally-buffered edits at once instead of one commit per edit.
-  async pushBatch(changes: PageChange[], message: string): Promise<void> {
-    if (changes.length === 0) return;
+  // Returns the sha of the commit that landed (null if there was nothing to write).
+  async pushBatch(changes: PageChange[], message: string): Promise<string | null> {
+    if (changes.length === 0) return null;
     const now = Math.floor(Date.now() / 1000);
 
-    await this.commit(message, async (baseCommitSha) => {
+    return this.commit(message, async (baseCommitSha) => {
       const entries = await this.readIndexAt(baseCommitSha);
       const entryMap = new Map(entries.map((e) => [e.title, e]));
       const fileChanges: FileChange[] = [];

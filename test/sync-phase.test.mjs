@@ -32,21 +32,22 @@ test('an edit goes waiting -> starting -> pulling -> pushing -> done', async () 
   store.dispose();
 });
 
-test('a sync that stashed a conflict copy ends in "conflict" until the copy is gone', async () => {
+test('a sync that left conflict markers in a page ends in "conflict" until they are resolved', async () => {
   installMockGitHubApi({ delayMs: 5 });
   const store = new GitHubSyncStore(config);
   await store.syncNow();
   await store.savePage({ title: 'Notes', lines: ['Notes', 'v0'], updated: 1000 });
   await store.syncNow();
 
-  await store.savePage({ title: 'Notes', lines: ['Notes', 'v0', 'mine'], updated: 1500 });
-  await new GitHubStore(config).pushBatch([{ title: 'Notes', lines: ['Notes', 'v0', 'theirs'], updated: 2000 }], 'other device');
+  await store.savePage({ title: 'Notes', lines: ['Notes', 'mine'], updated: 1500 });
+  await new GitHubStore(config).pushBatch([{ title: 'Notes', lines: ['Notes', 'theirs'], updated: 2000 }], 'other device');
   await store.syncNow();
 
   assert.equal(store.getSyncStatus().phase, 'conflict');
   assert.equal(store.getSyncStatus().conflictCount, 1);
+  assert.deepEqual(store.getSyncStatus().conflictTitles, ['Notes']);
 
-  await store.deletePage('Notes (sync conflict)');
+  await store.savePage({ title: 'Notes', lines: ['Notes', 'mine'], updated: 3000 }); // the user settled it
   await store.syncNow();
   assert.equal(store.getSyncStatus().phase, 'done');
   assert.equal(store.getSyncStatus().conflictCount, 0);

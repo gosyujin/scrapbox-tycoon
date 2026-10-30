@@ -19,6 +19,8 @@
   まとめて push する本体。失敗時は `RETRY_AFTER_FAILURE_MS = 15000` 後に
   自動リトライ (self-healing)。フッターの同期状態表示・デバッグログの
   ソースでもある。
+- `src/merge.ts` — 同期時の行単位 3-way マージ (`merge3`) と、残った競合マーカーの検出/解消 (純粋ロジック、DOM 非依存、テスト対象)。
+  競合コピーページは作らない (経緯: [decisions/13](decisions/13-three-way-merge-in-page-markers.md))。
 - `src/store/reference-store.ts` — 実 Scrapbox プロジェクトの export JSON を
   読み込んだ、編集不可の参照用スナップショット (IndexedDB)。編集対象の
   ノートとは完全に独立。

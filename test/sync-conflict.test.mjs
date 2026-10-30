@@ -1,21 +1,20 @@
-// Regression test for a real data-loss report: editing the same page on two
-// devices between syncs used to mean the more-recent push silently threw
-// away whatever the other device had added, with no trace of it anywhere
-// except GitHub's commit history. Confirmed against the user's real notes
-// repo (commits b66065c.. / 8994df4.. on the phone, 0f9e937.. on the PC):
-// the PC's sync landed cleanly on top of the phone's already-pushed edit,
-// then a few seconds later overwrote that same page back down to the PC's
-// own (older) content, discarding everything the phone had just added.
+// Two devices changing the same page between syncs (decisions/07 first, then
+// 13): the page is merged line by line against the version both started from.
+// No "(sync conflict)" copy page is created; whatever cannot be merged cleanly
+// stays inside the page between markers, and resolving it must not start a
+// new conflict -- that cascade (resolve -> conflict -> resolve -> ...) is what
+// the copy-page design produced.
 //
-// This is a two-device scenario, so it drives two GitHubSyncStore instances
-// against ONE shared mock GitHub remote but with separate localStorage
-// (swapped via global.localStorage between each device's turn -- safe here
-// because every turn ends with an awaited syncNow(), whose runSync() clears
-// any timer that turn's savePage() scheduled before the next swap).
+// Two GitHubSyncStore instances against ONE shared mock remote, with separate
+// localStorage swapped via global.localStorage between turns (safe because every
+// turn ends with an awaited syncNow(), which clears that turn's timers).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { GitHubSyncStore } from '../js/store/github-sync-store.js';
+import { findConflictHunks, resolveConflictHunk, hasConflictMarkers } from '../js/merge.js';
 import { installMockGitHubApi } from './helpers/mock-github-api.mjs';
+
+const config = { owner: 'o', repo: 'r', branch: 'main', token: 't' };
 
 function freshLocalStorage() {
   const m = new Map();
@@ -26,69 +25,178 @@ function freshLocalStorage() {
   };
 }
 
-test('a genuine concurrent edit to the same page is stashed as a mergeCandidate page instead of silently discarded', async () => {
-  const mock = installMockGitHubApi({ delayMs: 10 });
-  const storagePhone = freshLocalStorage();
-  const storagePc = freshLocalStorage();
-  const config = { owner: 'o', repo: 'r', branch: 'main', token: 't' };
+// A phone + a PC, both already synced with 'Notes' = [Notes, a, b, c].
+async function twoDevices(delayMs = 5) {
+  const mock = installMockGitHubApi({ delayMs });
+  const storage = { phone: freshLocalStorage(), pc: freshLocalStorage() };
+  const stores = {};
+  const on = (name) => {
+    global.localStorage = storage[name];
+    return stores[name];
+  };
+  global.localStorage = storage.phone;
+  stores.phone = new GitHubSyncStore(config);
+  await stores.phone.syncNow();
+  await stores.phone.savePage({ title: 'Notes', lines: ['Notes', 'a', 'b', 'c'], updated: 1000 });
+  await stores.phone.syncNow();
+  global.localStorage = storage.pc;
+  stores.pc = new GitHubSyncStore(config);
+  await stores.pc.syncNow();
+  return {
+    mock,
+    storage,
+    phone: () => on('phone'),
+    pc: () => on('pc'),
+    dispose: () => Object.values(stores).forEach((s) => s.dispose()),
+  };
+}
 
-  // updated is passed explicitly (rather than left to default to
-  // Math.floor(Date.now() / 1000)) so the two real edits below land on
-  // different values even though this whole test runs in well under a
-  // second -- otherwise the second-resolution timestamp could tie with the
-  // baseline and mask the exact divergence this test means to trigger.
-  global.localStorage = storagePhone;
-  const phone = new GitHubSyncStore(config);
-  await phone.syncNow(); // let the constructor's initial sync(0) settle
-  await phone.savePage({ title: 'Notes', lines: ['Notes', 'v0'], updated: 1000 });
-  await phone.syncNow();
-
-  global.localStorage = storagePc;
-  const pc = new GitHubSyncStore(config);
-  await pc.syncNow(); // baseline: picks up 'Notes' v0 from the remote
-
-  // The PC has an edit sitting locally, not yet synced -- e.g. made while
-  // offline, or simply before its own debounced sync got a chance to run.
-  await pc.savePage({ title: 'Notes', lines: ['Notes', 'v0', 'edited on PC'] });
-
-  // Meanwhile the phone edits the exact same page and syncs first.
-  global.localStorage = storagePhone;
-  await phone.savePage({ title: 'Notes', lines: ['Notes', 'v0', 'added on phone'], updated: 2000 });
-  await phone.syncNow();
-
-  // Now the PC syncs. Its own edit still wins for the 'Notes' title itself
-  // -- that per-title "more recent sync wins" behavior is documented and
-  // intentional (see github-sync-store.ts's header comment) -- but the
-  // phone's edit must not vanish without a trace.
-  global.localStorage = storagePc;
-  await pc.syncNow();
-
-  const notes = await pc.getPage('Notes');
-  assert.deepEqual(notes.lines, ['Notes', 'v0', 'edited on PC']);
-
-  const stashedTitle = 'Notes (sync conflict)';
-  const stashed = await pc.getPage(stashedTitle);
-  assert.ok(stashed, 'expected the phone edit to be stashed as a separate page');
-  assert.equal(stashed.mergeCandidate, 'Notes');
-  // lines[0] must equal the page's own title, else the first edit to the
-  // copy would be treated as a rename (see stashConflictIfDiverged).
-  assert.deepEqual(stashed.lines, [stashedTitle, 'v0', 'added on phone']);
-
-  // It must have been pushed to the remote too, not just kept on this one
-  // device -- otherwise it would vanish the moment this device's
-  // localStorage is cleared.
-  const remoteTitles = mock
+async function remoteTitles(mock) {
+  return mock
     .currentRemoteState()
     .index.map((e) => e.title)
     .sort();
-  assert.deepEqual(remoteTitles, ['Notes', stashedTitle].sort());
+}
 
-  // A second, uneventful sync must not stash a duplicate copy of the same
-  // divergence (conflictSeen is what prevents that).
+test('edits to different lines on two devices are merged, with no extra page and no markers', async () => {
+  const d = await twoDevices();
+  await d.pc().savePage({ title: 'Notes', lines: ['Notes', 'a', 'b', 'c', 'line from PC'], updated: 1500 });
+  await d.phone().savePage({ title: 'Notes', lines: ['Notes', 'A', 'b', 'c'], updated: 2000 });
+  await d.phone().syncNow();
+  const pc = d.pc();
   await pc.syncNow();
-  const pagesAfter = await pc.listPages();
-  assert.equal(pagesAfter.filter((p) => p.title === stashedTitle).length, 1);
 
-  phone.dispose();
-  pc.dispose();
+  const expected = ['Notes', 'A', 'b', 'c', 'line from PC'];
+  assert.deepEqual((await pc.getPage('Notes')).lines, expected);
+  assert.deepEqual(d.mock.remotePage('Notes').lines, expected);
+  assert.deepEqual(await remoteTitles(d.mock), ['Notes']);
+  assert.equal(pc.getSyncStatus().phase, 'done');
+
+  const phone = d.phone();
+  await phone.syncNow();
+  assert.deepEqual((await phone.getPage('Notes')).lines, expected, 'the phone converges on the same merged page');
+  assert.deepEqual(await phone.listPages().then((l) => l.map((p) => p.title)), ['Notes']);
+  d.dispose();
+});
+
+test('the same line edited on both devices is kept, both sides, between markers on every device', async () => {
+  const d = await twoDevices();
+  await d.pc().savePage({ title: 'Notes', lines: ['Notes', 'a', 'B-pc', 'c'], updated: 1500 });
+  await d.phone().savePage({ title: 'Notes', lines: ['Notes', 'a', 'B-phone', 'c'], updated: 2000 });
+  await d.phone().syncNow();
+  const pc = d.pc();
+  await pc.syncNow();
+
+  const merged = (await pc.getPage('Notes')).lines;
+  assert.equal(findConflictHunks(merged).length, 1);
+  assert.ok(merged.includes('B-pc') && merged.includes('B-phone'), 'nothing either side wrote is lost');
+  assert.deepEqual(d.mock.remotePage('Notes').lines, merged);
+  assert.deepEqual(await remoteTitles(d.mock), ['Notes'], 'no conflict copy page');
+  assert.equal(pc.getSyncStatus().phase, 'conflict');
+  assert.deepEqual(pc.getSyncStatus().conflictTitles, ['Notes']);
+
+  const phone = d.phone();
+  await phone.syncNow();
+  assert.deepEqual((await phone.getPage('Notes')).lines, merged);
+  assert.equal(phone.getSyncStatus().phase, 'conflict');
+  d.dispose();
+});
+
+test('both devices merging the same divergence at once end up identical (the second push has nothing to fight over)', async () => {
+  const d = await twoDevices();
+  await d.pc().savePage({ title: 'Notes', lines: ['Notes', 'a', 'B-pc', 'c'], updated: 1500 });
+  await d.phone().savePage({ title: 'Notes', lines: ['Notes', 'a', 'B-phone', 'c'], updated: 2000 });
+  // Both pull and push in the same window: PC loses the ref race and must
+  // re-merge against what the phone wrote.
+  const pc = d.pc();
+  const mock = d.mock;
+  const { GitHubStore } = await import('../js/store/github-store.js');
+  const phoneRemote = new GitHubStore(config);
+  mock.setBeforeRefUpdateHook(() =>
+    phoneRemote.pushBatch([{ title: 'Notes', lines: ['Notes', 'a', 'B-phone', 'c'], updated: 2000 }], 'phone')
+  );
+  await pc.syncNow();
+
+  const lines = mock.remotePage('Notes').lines;
+  assert.ok(lines.includes('B-pc') && lines.includes('B-phone'));
+  assert.equal(findConflictHunks(lines).length, 1, 'one block, not nested markers from a second round');
+  assert.deepEqual(await remoteTitles(mock), ['Notes']);
+  d.dispose();
+});
+
+test('resolving a conflict the same way on both devices does not create a new conflict', async () => {
+  const d = await twoDevices();
+  await d.pc().savePage({ title: 'Notes', lines: ['Notes', 'a', 'B-pc', 'c'], updated: 1500 });
+  await d.phone().savePage({ title: 'Notes', lines: ['Notes', 'a', 'B-phone', 'c'], updated: 2000 });
+  await d.phone().syncNow();
+  await d.pc().syncNow();
+  await d.phone().syncNow();
+
+  // Each device resolves on its own, before seeing the other's resolution.
+  for (const name of ['phone', 'pc']) {
+    const store = d[name]();
+    const page = await store.getPage('Notes');
+    const lines = resolveConflictHunk(page.lines, findConflictHunks(page.lines)[0], 'first');
+    await store.savePage({ title: 'Notes', lines, updated: name === 'phone' ? 3000 : 3100 });
+  }
+  await d.phone().syncNow();
+  const pc = d.pc();
+  await pc.syncNow();
+  const phone = d.phone();
+  await phone.syncNow();
+
+  const remote = d.mock.remotePage('Notes').lines;
+  assert.equal(hasConflictMarkers(remote), false);
+  assert.deepEqual(remote, ['Notes', 'a', 'B-pc', 'c']);
+  assert.deepEqual((await phone.getPage('Notes')).lines, remote);
+  assert.deepEqual((await pc.getPage('Notes')).lines, remote);
+  assert.deepEqual(await remoteTitles(d.mock), ['Notes']);
+  assert.equal(phone.getSyncStatus().phase, 'done');
+  d.dispose();
+});
+
+test('resolving differently on two devices never spawns extra pages: one block, and both devices converge', async () => {
+  const d = await twoDevices();
+  await d.pc().savePage({ title: 'Notes', lines: ['Notes', 'a', 'B-pc', 'c'], updated: 1500 });
+  await d.phone().savePage({ title: 'Notes', lines: ['Notes', 'a', 'B-phone', 'c'], updated: 2000 });
+  await d.phone().syncNow();
+  await d.pc().syncNow();
+  await d.phone().syncNow();
+
+  for (const [name, choice, updated] of [['phone', 'first', 3000], ['pc', 'second', 3100]]) {
+    const store = d[name]();
+    const page = await store.getPage('Notes');
+    await store.savePage({ title: 'Notes', lines: resolveConflictHunk(page.lines, findConflictHunks(page.lines)[0], choice), updated });
+  }
+  await d.phone().syncNow();
+  const pc = d.pc();
+  await pc.syncNow();
+  const phone = d.phone();
+  await phone.syncNow();
+
+  const remote = d.mock.remotePage('Notes').lines;
+  assert.equal(findConflictHunks(remote).length, 1);
+  assert.ok(remote.includes('B-pc') && remote.includes('B-phone'));
+  assert.deepEqual((await phone.getPage('Notes')).lines, remote);
+  assert.deepEqual((await pc.getPage('Notes')).lines, remote);
+  assert.deepEqual(await remoteTitles(d.mock), ['Notes']);
+  d.dispose();
+});
+
+test('without a recorded base (older meta) nothing is lost either', async () => {
+  const d = await twoDevices();
+  await d.pc().savePage({ title: 'Notes', lines: ['Notes', 'a', 'b', 'c', 'pc line'], updated: 1500 });
+  // Simulate meta written by a build that did not track baseCommit.
+  const metaKey = 'scrapbox_tycoon_sync_meta_v1';
+  const meta = JSON.parse(d.storage.pc.getItem(metaKey));
+  delete meta.baseCommit;
+  d.storage.pc.setItem(metaKey, JSON.stringify(meta));
+  await d.phone().savePage({ title: 'Notes', lines: ['Notes', 'a', 'b', 'c', 'phone line'], updated: 2000 });
+  await d.phone().syncNow();
+  await d.pc().syncNow();
+
+  const lines = d.mock.remotePage('Notes').lines;
+  assert.ok(lines.includes('pc line') && lines.includes('phone line'));
+  assert.deepEqual(await remoteTitles(d.mock), ['Notes']);
+  d.dispose();
 });

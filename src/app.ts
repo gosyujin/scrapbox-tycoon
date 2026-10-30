@@ -1,6 +1,7 @@
 import { LocalStore } from './store/local-store.js';
 import { GitHubSyncStore, isSyncConflictTitle } from './store/github-sync-store.js';
 import { diffLines, isIdentical } from './diff.js';
+import { findConflictHunks, hasConflictMarkers, hunkSides, resolveConflictHunk, type HunkChoice } from './merge.js';
 import { Editor } from './editor.js';
 import { extractLinks, renderLinesInto } from './parser.js';
 import { parseScrapboxExport, buildScrapboxExport } from './scrapbox-format.js';
@@ -615,6 +616,8 @@ let refSort: ReferenceSortKey = loadSort(REF_SORT_KEY, REF_SORT_LABELS, 'modifie
 interface NoteRow {
   title: string;
   description: string;
+  // Holds unresolved conflict markers from a sync merge (see merge.ts).
+  conflict?: boolean;
   created: number;
   updated: number;
 }
@@ -639,7 +642,7 @@ async function loadNoteRows(query: string): Promise<NoteRow[]> {
     const full = await store.getPage(s.title);
     if (!full) continue;
     if (!matchQuery(full.lines.join('\n'), query)) continue;
-    rows.push({ title: full.title, description: pageDescription(full.lines), created: full.created, updated: full.updated });
+    rows.push({ title: full.title, description: pageDescription(full.lines), created: full.created, updated: full.updated, conflict: hasConflictMarkers(full.lines) });
   }
   return rows;
 }
@@ -650,13 +653,13 @@ async function loadNoteRows(query: string): Promise<NoteRow[]> {
 // `direction`, when given (1-hop linked pages only -- see renderLinkedPages),
 // shows which way the link between this page and the current one goes:
 // → this page links to it, ← it links to this page, ⇔ both.
-type PageCardItem = { title: string; description: string; direction?: string };
+type PageCardItem = { title: string; description: string; direction?: string; conflict?: boolean };
 
 function pageCardHtml(p: PageCardItem, linkBase: string): string {
   return `
       <a class="page-card" href="${linkBase}${encodeURIComponent(p.title)}">
         ${p.direction ? `<span class="page-card-dir">${p.direction}</span>` : ''}
-        <div class="page-card-title">${escapeHtml(p.title)}</div>
+        <div class="page-card-title">${p.conflict ? '<span class="page-card-warn">⚠ 競合</span> ' : ''}${escapeHtml(p.title)}</div>
         <div class="page-card-desc">${escapeHtml(p.description)}</div>
       </a>`;
 }
@@ -880,6 +883,32 @@ async function renderPage(title: string): Promise<void> {
        </div>`;
   }
 
+  // Same page changed on two devices in the same place: the sync merge keeps
+  // both versions between markers (see merge.ts). One block per row, settled
+  // with a tap instead of hand-editing the marker lines.
+  const hunks = findConflictHunks(page.lines);
+  const hunkPreview = (lines: string[]) => escapeHtml(lines.length > 0 ? lines.join('\n') : '(空)');
+  const markerBanner =
+    hunks.length > 0
+      ? `<div class="merge-banner conflict-banner marker-banner">
+           <span>同期の競合: 別の端末と同じ箇所が別々に変更されたため、両方の内容をページ内に残しています (${hunks.length}件)。残す方を選んでください。</span>
+           ${hunks
+             .map((h, i) => {
+               const { first, second } = hunkSides(page.lines, h);
+               return `<div class="conflict-hunk" data-hunk="${i}">
+                 <div class="conflict-side"><b>先に保存された版</b><pre>${hunkPreview(first)}</pre></div>
+                 <div class="conflict-side"><b>後に保存された版</b><pre>${hunkPreview(second)}</pre></div>
+                 <div class="conflict-actions">
+                   <button data-choice="first">先の版を残す</button>
+                   <button data-choice="second">後の版を残す</button>
+                   <button data-choice="both" class="secondary">両方残す</button>
+                 </div>
+               </div>`;
+             })
+             .join('')}
+         </div>`
+      : '';
+
   // Notes and the reference project are separate namespaces (see the
   // fallback comment on Editor's knownTitles below), so having the same
   // title in both is entirely possible -- just easy to not notice, since
@@ -896,6 +925,7 @@ async function renderPage(title: string): Promise<void> {
     <div class="content page-content">
       ${isNew ? '<p class="muted">新規ページ（最初の行を編集すると保存されます）</p>' : ''}
       ${mergeBanner}
+      ${markerBanner}
       ${refDuplicateBanner}
       ${
         isSyncCapable(store) && !isNew
@@ -912,6 +942,21 @@ async function renderPage(title: string): Promise<void> {
       </section>
     </div>`;
   wireQuickOpen();
+
+  document.querySelectorAll('.conflict-hunk button[data-choice]').forEach((el) => {
+    const button = el as HTMLButtonElement;
+    button.addEventListener('click', async () => {
+      const index = Number((button.closest('.conflict-hunk') as HTMLElement).dataset.hunk);
+      // Re-read: a sync may have changed the page (and the block positions)
+      // since this banner was drawn.
+      const current = await store.getPage(title);
+      const hunk = current && findConflictHunks(current.lines)[index];
+      if (current && hunk) {
+        await store.savePage({ title, lines: resolveConflictHunk(current.lines, hunk, button.dataset.choice as HunkChoice) });
+      }
+      await renderPage(title);
+    });
+  });
 
   if (page.mergeCandidate) {
     const targetTitle = page.mergeCandidate;

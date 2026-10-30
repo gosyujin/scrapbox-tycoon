@@ -9,22 +9,23 @@
 // replaces; batching one commit per *sync* instead of per *edit* removes
 // almost all opportunity for the commit races that model was fighting.
 //
-// Sync is "local wins for what I changed, remote wins for what I didn't":
-// on each sync, pages NOT in the local dirty set are refreshed from remote
-// (picking up other devices' edits); pages IN the dirty set are pushed as
-// they are locally, overwriting whatever is on GitHub. Editing the exact
-// same page on two devices between syncs is not merged line-by-line — the
-// more recent sync simply wins for that title — acceptable for a
-// single-user tool syncing every few seconds, not worth the complexity of a
-// real merge/conflict UI here. What is NOT acceptable is losing the other
-// side's edit silently: if pull() sees that a locally-dirty page's remote
-// `updated` no longer matches what we last synced (i.e. someone else really
-// did change it in between, not just "we haven't looked yet"), it stashes
-// the remote content as a separate page tagged with `mergeCandidate`, the
-// same "don't overwrite, save alongside and let the user merge" mechanism
-// app.ts already uses for rename collisions.
+// Sync is a three-way merge per page. A page changed on only one side just
+// moves across (this device's dirty pages are pushed; pages this device did
+// not touch are refreshed from the remote). A page changed on BOTH sides since
+// the last sync is merged line by line against the version both started from
+// (fetched from git history, see SyncMeta.baseCommit): edits to different
+// lines combine, and the rare edits to the same lines are kept side by side
+// between conflict markers inside the page (see merge.ts) for the user to
+// settle with a tap. No "(sync conflict)" copy pages are created any more:
+// those spread to every device, were resolved on several at once, and each
+// resolution was itself a new conflict.
+//
+// Because the merge is deterministic (same inputs -> same lines on every
+// device), two devices that both merge the same divergence end up with
+// identical content and the later push has nothing left to conflict about.
 import { LocalStore } from './local-store.js';
-import { GitHubStore, PushConflictError, type GitHubStoreConfig, type PageChange } from './github-store.js';
+import { GitHubStore, PushConflictError, type GitHubStoreConfig, type PageChange, type RemoteSnapshot } from './github-store.js';
+import { commonLines, hasConflictMarkers, merge3 } from '../merge.js';
 import type { Page, PageSummary, PageInput, Store, SyncStatus, SyncCapable } from '../types.js';
 
 const SYNC_META_KEY = 'scrapbox_tycoon_sync_meta_v1';
@@ -45,8 +46,10 @@ const SYNC_LOCK_TIMEOUT_MS = 20000;
 // transient failure recovers even during a lull in editing.
 const RETRY_AFTER_FAILURE_MS = 15000;
 
-// Title suffix of the page stashConflictIfDiverged() creates. app.ts keys its
-// "conflict" banner (as opposed to the plain rename-collision one) off this.
+// Title suffix of the copy pages older builds created for a conflict. Nothing
+// creates them any more, but existing ones are still around: app.ts keeps its
+// banner for them, and they are exempt from conflict handling here (scratch
+// pages, last write wins).
 export const SYNC_CONFLICT_SUFFIX = ' (sync conflict)';
 export function isSyncConflictTitle(title: string): boolean {
   return /\(sync conflict\)(_\d+)?$/.test(title);
@@ -62,12 +65,11 @@ interface SyncMeta {
   // title -> remote `updated` as of the last successful sync; used to tell
   // whether a page changed on the remote since we last looked at it.
   lastSyncedUpdated: Record<string, number>;
-  // title -> remote `updated` value we've already split off into a
-  // "(sync conflict)" page for. Without this, a locally-dirty page that
-  // keeps failing to push (see RETRY_AFTER_FAILURE_MS) would get a fresh
-  // conflict copy stashed on every retry's pull(), since the divergence
-  // that triggered it is still there until our push actually lands.
-  conflictSeen: Record<string, number>;
+  // title -> the commit in which this page had exactly the content we last
+  // synced (lastSyncedUpdated). That version is the common ancestor for a
+  // three-way merge if both sides change the page, and it can always be read
+  // back from git history -- so no copy of it has to be kept locally.
+  baseCommit: Record<string, string>;
   // title -> the `updated` value of the page content we were about to hand to
   // pushBatch(), written BEFORE the network call and cleared once it's
   // acknowledged. If the commit lands on GitHub but we never hear back (iOS
@@ -94,13 +96,13 @@ function readMeta(): SyncMeta {
       dirty: Array.isArray(raw.dirty) ? raw.dirty : [],
       deleted: Array.isArray(raw.deleted) ? raw.deleted : [],
       lastSyncedUpdated: raw.lastSyncedUpdated && typeof raw.lastSyncedUpdated === 'object' ? raw.lastSyncedUpdated : {},
-      conflictSeen: raw.conflictSeen && typeof raw.conflictSeen === 'object' ? raw.conflictSeen : {},
+      baseCommit: raw.baseCommit && typeof raw.baseCommit === 'object' ? raw.baseCommit : {},
       pendingPush: raw.pendingPush && typeof raw.pendingPush === 'object' ? raw.pendingPush : {},
       lastSyncedCommitSha: typeof raw.lastSyncedCommitSha === 'string' ? raw.lastSyncedCommitSha : null,
       lastPulledHeadSha: typeof raw.lastPulledHeadSha === 'string' ? raw.lastPulledHeadSha : null,
     };
   } catch {
-    return { dirty: [], deleted: [], lastSyncedUpdated: {}, conflictSeen: {}, pendingPush: {}, lastSyncedCommitSha: null, lastPulledHeadSha: null };
+    return { dirty: [], deleted: [], lastSyncedUpdated: {}, baseCommit: {}, pendingPush: {}, lastSyncedCommitSha: null, lastPulledHeadSha: null };
   }
 }
 
@@ -159,6 +161,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
       state: 'idle',
       phase: 'waiting',
       conflictCount: 0,
+      conflictTitles: [],
       dirtyCount: this.meta.dirty.length + this.meta.deleted.length,
       lastSyncedAt: null,
       lastSyncedCommitSha: this.meta.lastSyncedCommitSha,
@@ -307,7 +310,10 @@ export class GitHubSyncStore implements Store, SyncCapable {
       `cleanup: remove ${titles.length} orphaned remote page(s)`
     );
     this.updateMeta((m) => {
-      for (const title of titles) delete m.lastSyncedUpdated[title];
+      for (const title of titles) {
+        delete m.lastSyncedUpdated[title];
+        delete m.baseCommit[title];
+      }
     });
   }
 
@@ -402,7 +408,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
         if (!touchedRemote) this.logStatus(); // real work: record that a sync started
         touchedRemote = true;
         this.setStatus({ phase: 'pulling' }, false);
-        if (await this.pull()) changedLocal = true;
+        if (await this.pull(head)) changedLocal = true;
         this.updateMeta((m) => {
           m.lastPulledHeadSha = head;
         });
@@ -420,11 +426,14 @@ export class GitHubSyncStore implements Store, SyncCapable {
         m.lastSyncedCommitSha = lastSyncedCommitSha;
       });
       this.retryScheduled = false;
-      const conflictCount = (await this.local.listPages()).filter((p) => isSyncConflictTitle(p.title)).length;
+      // Pages that still need a human: marker blocks left by a merge, plus any
+      // legacy "(sync conflict)" copies.
+      const conflictTitles = await this.local.findPages((p) => isSyncConflictTitle(p.title) || hasConflictMarkers(p.lines));
       this.setStatus({
         state: 'idle',
-        phase: conflictCount > 0 ? 'conflict' : 'done',
-        conflictCount,
+        phase: conflictTitles.length > 0 ? 'conflict' : 'done',
+        conflictCount: conflictTitles.length,
+        conflictTitles,
         dirtyCount: this.meta.dirty.length + this.meta.deleted.length,
         lastSyncedAt: Math.floor(Date.now() / 1000),
         lastSyncedCommitSha,
@@ -444,82 +453,109 @@ export class GitHubSyncStore implements Store, SyncCapable {
     }
   }
 
-  // Called from pull() for a title that's locally dirty (so push() is about
-  // to overwrite it on the remote). If remoteUpdated no longer matches what
-  // we last synced for this title, someone else genuinely changed it in
-  // between -- not just "we haven't looked since our own edit". Rather than
-  // let push() silently discard that other change, fetch it and save it as
-  // a separate page tagged with mergeCandidate pointing back at the real
-  // title, so the existing rename-collision banner (see app.ts) lets the
-  // user merge it in whenever they notice.
-  private async stashConflictIfDiverged(title: string, remoteUpdated: number): Promise<boolean> {
-    // A conflict copy is a disposable scratch page. Stashing the other side of
-    // a conflict copy would make "X (sync conflict) (sync conflict)" and so on
-    // without end; for these the later push simply wins.
+  // Called from pull() for a title that's locally dirty (so push() is about to
+  // write it on the remote). If the remote's `updated` no longer matches what
+  // we last synced for this title, another device really changed it in between
+  // -- not just "we haven't looked since our own edit" -- and the two versions
+  // are merged (see merge.ts) instead of one silently replacing the other.
+  // The merged page stays dirty so this same sync pushes it. Returns whether
+  // the local page changed.
+  private async mergeDiverged(snap: RemoteSnapshot, title: string, remoteUpdated: number): Promise<boolean> {
+    // Legacy "(sync conflict)" copies are disposable scratch pages: the later
+    // push simply wins (merging a copy would just breed markers inside it).
     if (isSyncConflictTitle(title)) return false;
     const meta = this.fresh();
-    // undefined = never synced this title: a page created locally whose title
-    // also exists remotely (made on another device) is a divergence too.
-    if (meta.lastSyncedUpdated[title] === remoteUpdated) return false;
-    if (meta.conflictSeen[title] === remoteUpdated) return false; // already stashed this exact divergence
+    const adoptAsBase = () =>
+      this.updateMeta((m) => {
+        m.lastSyncedUpdated[title] = remoteUpdated;
+        m.baseCommit[title] = snap.commitSha;
+        delete m.pendingPush[title];
+      });
+    if (meta.lastSyncedUpdated[title] === remoteUpdated) {
+      // Nothing changed remotely; just learn the base if an older build never recorded it.
+      if (!meta.baseCommit[title]) adoptAsBase();
+      return false;
+    }
     // The remote's `updated` is exactly what we were mid-way through pushing:
     // that commit landed but its acknowledgement never reached us (see
     // SyncMeta.pendingPush). It's our own write, not a divergence.
     if (meta.pendingPush[title] === remoteUpdated) {
-      this.updateMeta((m) => {
-        m.lastSyncedUpdated[title] = remoteUpdated;
-        delete m.pendingPush[title];
-      });
+      adoptAsBase();
       return false;
     }
-    const remotePage = await this.remote.getPage(title);
-    if (!remotePage) return false;
-    // Belt and braces for the case above when pendingPush wasn't available
-    // (e.g. meta written by an older build): identical content is never a
-    // conflict, whatever its timestamp says.
+    const remotePage = await snap.getPage(title);
     const localPage = await this.local.getPage(title);
-    if (localPage && sameLines(localPage.lines, remotePage.lines)) {
-      this.updateMeta((m) => {
-        m.lastSyncedUpdated[title] = remoteUpdated;
-      });
+    if (!remotePage || !localPage) return false;
+    // Identical content is never a conflict, whatever the timestamps say.
+    if (sameLines(localPage.lines, remotePage.lines)) {
+      adoptAsBase();
       return false;
     }
-    const conflictTitle = await this.uniqueConflictTitle(`${title}${SYNC_CONFLICT_SUFFIX}`);
+    const baseLines = await this.baseLines(title, meta.baseCommit[title], localPage.lines, remotePage.lines);
+    // The user may have edited this page again while we were fetching: don't
+    // merge (and overwrite) a version that is already out of date.
+    const latest = await this.local.getPage(title);
+    if (!latest || !sameLines(latest.lines, localPage.lines)) return false;
+
+    // lines[0] is the page's identity (the title), so it is kept out of the
+    // merge: a disagreement there must never put a marker on the first line.
+    const merged = merge3(
+      baseLines.slice(1),
+      { lines: localPage.lines.slice(1), updated: localPage.updated },
+      { lines: remotePage.lines.slice(1), updated: remotePage.updated }
+    );
+    const lines = [title, ...merged.lines];
+    if (sameLines(lines, remotePage.lines)) {
+      // Our edit turned out to be contained in the remote version.
+      await this.local.savePage(remotePage);
+      this.updateMeta((m) => {
+        m.dirty = m.dirty.filter((t) => t !== title);
+      });
+      adoptAsBase();
+      return true;
+    }
     await this.local.savePage({
-      title: conflictTitle,
-      // lines[0] is the page's identity (Editor/app.ts treat a title !=
-      // lines[0] as a rename on the next edit). Keeping the original's
-      // first line here made any edit to the copy "rename" it back to the
-      // original title, collide, and get re-saved as "<title>_2" -- no
-      // longer a sync-conflict page at all.
-      lines: [conflictTitle, ...remotePage.lines.slice(1)],
+      title,
+      lines,
       created: remotePage.created,
-      updated: remotePage.updated,
-      mergeCandidate: title,
+      // Deterministic and strictly newer than both inputs, so every device
+      // that merges the same pair writes the same record (and nobody mistakes
+      // the result for either input by its `updated`).
+      updated: Math.max(localPage.updated, remotePage.updated) + 1,
     });
-    this.markDirty(conflictTitle); // so this same sync's push() also lands it on the remote
-    // We have now seen (and preserved) the remote version, so our push is
-    // based on it: record it as the synced base, which is also what lets
-    // push()'s compare-and-swap accept our overwrite.
-    this.updateMeta((m) => {
-      m.conflictSeen[title] = remoteUpdated;
-      m.lastSyncedUpdated[title] = remoteUpdated;
-    });
+    // We have now seen the remote version and our page contains it, so the
+    // push is based on it: that is also what lets push()'s compare-and-swap
+    // accept the write.
+    adoptAsBase();
     return true;
   }
 
-  private async uniqueConflictTitle(base: string): Promise<string> {
-    if (!(await this.local.getPage(base))) return base;
-    let n = 2;
-    while (await this.local.getPage(`${base}_${n}`)) n++;
-    return `${base}_${n}`;
+  // The version both sides started from, read from git history. Without a
+  // recorded base (an older build, or a title created on two devices) the
+  // lines both sides share stand in for it: everything else then counts as
+  // changed on both sides.
+  private async baseLines(title: string, baseCommit: string | undefined, localLines: string[], remoteLines: string[]): Promise<string[]> {
+    if (baseCommit) {
+      try {
+        const base = await this.remote.getPageAt(baseCommit, title);
+        if (base) return base.lines;
+      } catch (err) {
+        // A transient failure must not silently degrade the merge; only a
+        // commit that is truly gone falls back.
+        if (!/ 404 /.test((err as Error).message)) throw err;
+      }
+    }
+    return commonLines(localLines, remoteLines);
   }
 
   // Returns whether this changed anything in the local store (so the UI knows
-  // a re-render is worth it).
-  private async pull(): Promise<boolean> {
+  // a re-render is worth it). `headSha` is the branch tip the caller just read;
+  // everything here is read from that one commit.
+  private async pull(headSha: string): Promise<boolean> {
     let changed = false;
-    const remoteEntries = await this.remote.listPages();
+    const snap = this.remote.snapshotAt(headSha);
+    const remoteEntries = await snap.listPages();
+    const learnBase: string[] = [];
 
     for (const entry of remoteEntries) {
       // Meta is re-read per entry (not snapshotted before the listPages()
@@ -530,21 +566,30 @@ export class GitHubSyncStore implements Store, SyncCapable {
       // brand-new local edit before it's ever pushed.
       const meta = this.fresh();
       if (meta.dirty.includes(entry.title)) {
-        if (await this.stashConflictIfDiverged(entry.title, entry.updated)) changed = true;
-        continue; // our local edit still wins on push for this title
+        if (await this.mergeDiverged(snap, entry.title, entry.updated)) changed = true;
+        continue; // our (possibly merged) version is pushed next
       }
-      if (meta.lastSyncedUpdated[entry.title] === entry.updated) continue; // unchanged
-      const remotePage = await this.remote.getPage(entry.title);
+      if (meta.lastSyncedUpdated[entry.title] === entry.updated) {
+        if (!meta.baseCommit[entry.title]) learnBase.push(entry.title);
+        continue; // unchanged
+      }
+      const remotePage = await snap.getPage(entry.title);
       if (remotePage) {
         await this.local.savePage(remotePage);
         this.updateMeta((m) => {
           m.lastSyncedUpdated[entry.title] = remotePage.updated;
+          m.baseCommit[entry.title] = snap.commitSha;
           // Deleted here but edited elsewhere since: the edit wins. Keeping the
           // pending delete would make push() erase that edit from the remote.
           m.deleted = m.deleted.filter((t) => t !== entry.title);
         });
         changed = true;
       }
+    }
+    if (learnBase.length > 0) {
+      this.updateMeta((m) => {
+        for (const title of learnBase) if (!m.baseCommit[title]) m.baseCommit[title] = snap.commitSha;
+      });
     }
 
     const remoteTitles = new Set(remoteEntries.map((e) => e.title));
@@ -556,6 +601,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
       await this.local.deletePage(title);
       this.updateMeta((m) => {
         delete m.lastSyncedUpdated[title];
+        delete m.baseCommit[title];
       });
       changed = true;
     }
@@ -607,7 +653,7 @@ export class GitHubSyncStore implements Store, SyncCapable {
     });
 
     this.setStatus({ phase: 'pushing' }, false);
-    await this.remote.pushBatch(changes, `sync: ${changes.length} page(s)`);
+    const commitSha = await this.remote.pushBatch(changes, `sync: ${changes.length} page(s)`);
 
     // Only drop the titles this push actually sent -- anything
     // markDirty()/markDeleted() added since the snapshot above stays
@@ -619,16 +665,15 @@ export class GitHubSyncStore implements Store, SyncCapable {
         delete m.pendingPush[change.title];
         if (change.lines === null) {
           delete m.lastSyncedUpdated[change.title];
+          delete m.baseCommit[change.title];
         } else {
           m.lastSyncedUpdated[change.title] = change.updated ?? Math.floor(Date.now() / 1000);
+          // This commit holds exactly what we just wrote: the base for the next merge.
+          if (commitSha) m.baseCommit[change.title] = commitSha;
         }
       }
       m.dirty = m.dirty.filter((t) => !pushedDirty.has(t));
       m.deleted = m.deleted.filter((t) => !pushedDeleted.has(t));
-      // The divergence that triggered a stashed conflict is resolved once our
-      // own push for that title actually lands -- lastSyncedUpdated above is
-      // about to be reset to it, so any future divergence is a new one.
-      for (const title of dirtyTitles) delete m.conflictSeen[title];
     });
   }
 }

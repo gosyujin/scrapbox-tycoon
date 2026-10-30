@@ -29,6 +29,13 @@ export class LocalStore implements Store {
     return pages[title] || null;
   }
 
+  // Titles of the pages matching `predicate`, from a single read of storage.
+  async findPages(predicate: (page: Page) => boolean): Promise<string[]> {
+    return Object.values(readAll())
+      .filter(predicate)
+      .map((p) => p.title);
+  }
+
   async savePage(page: PageInput): Promise<void> {
     const pages = readAll();
     const now = Math.floor(Date.now() / 1000);

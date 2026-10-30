@@ -46,10 +46,9 @@ test('a commit landing between pull and push is not silently overwritten (compar
   );
   await pc.syncNow();
 
-  assert.deepEqual(mock.remotePage('Notes').lines, ['Notes', 'v0', 'edited on PC']);
-  const stashed = mock.remotePage('Notes (sync conflict)');
-  assert.ok(stashed, "the phone's edit must survive as a conflict copy");
-  assert.deepEqual(stashed.lines, ['Notes (sync conflict)', 'v0', 'added on phone']);
+  // Both appended: the phone's commit must be merged in, not overwritten.
+  assert.deepEqual(mock.remotePage('Notes').lines, ['Notes', 'v0', 'edited on PC', 'added on phone']);
+  assert.equal(mock.remotePage('Notes (sync conflict)'), null, 'no conflict copy page any more');
   assert.equal(pc.getSyncStatus().dirtyCount, 0);
   pc.dispose();
 });

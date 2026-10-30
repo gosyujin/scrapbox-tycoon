@@ -1,5 +1,7 @@
 # 12. 同期の安全化 (段階1): compare-and-swap push
 
+> 注: 競合時に「(sync conflict)」コピーを作る部分は [13](13-three-way-merge-in-page-markers.md) で廃止し、3-way マージに置き換えた。CAS push・meta の再読み込み・Web Locks はそのまま。
+
 ## 経緯
 
 「競合コピーに対して競合コピーができる」「スマホだと判定できない」という報告を受け、同期プロトコル全体を

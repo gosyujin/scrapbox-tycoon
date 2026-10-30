@@ -27,6 +27,13 @@ GitHub 上の [`8994df4`](https://github.com/gosyujin/scrapbox-tycoon-notes/comm
 
 競合コピー (`lines[0]` が元タイトルのまま) の修復手順は [decisions/08-own-push-treated-as-conflict.md](decisions/08-own-push-treated-as-conflict.md) の「続報」の「非遡及」を参照。
 
+### 13. 競合コピーをやめた後の「(sync conflict)」ページ
+
+**既存データへの非遡及:** 旧版が作った `(sync conflict)` ページ (と `_2` や `(sync conflict) (sync conflict)`)
+は自動では消えない。以降は新しく作られない。各ページを開き、競合バナーの一致/不一致を見て
+「このコピーを削除」か「元ページに統合する」で片付ける。端末が 2 台以上ある場合は、**片方の端末だけで
+片付け、緑 (同期完了) になってからもう一方を触る**と余計な食い違いが出ない。
+
 ## ログの見方
 
 同期ログのコピー機能の詳細は [features.md](features.md) の「3. 同期ステータス履歴のコピー機能」を参照。

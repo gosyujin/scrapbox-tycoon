@@ -776,6 +776,33 @@ blockquote.sb-quote {
   word-break: break-all;
 }
 .conflict-diff[hidden] { display: none; }
+
+/* One block of a sync-merge conflict (see markerBanner in app.ts): the two
+   versions side by side (stacked on a phone), then the choice. */
+.conflict-hunk {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.conflict-side { flex: 1 1 220px; min-width: 0; }
+.conflict-side b { font-size: 12px; color: var(--muted); }
+.conflict-side pre {
+  margin: 2px 0 0;
+  padding: 6px 8px;
+  max-height: 30vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.conflict-actions { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 8px; }
+.page-card-warn { color: #d9822b; font-weight: 700; font-size: 11px; }
 .conflict-diff .diff-added { display: block; background: rgba(26, 127, 55, 0.18); }
 .conflict-diff .diff-removed { display: block; background: rgba(178, 59, 59, 0.18); }
 .conflict-diff .diff-same { display: block; color: var(--muted); }

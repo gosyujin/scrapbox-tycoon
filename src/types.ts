@@ -47,9 +47,11 @@ export type SyncPhase = 'waiting' | 'starting' | 'pulling' | 'pushing' | 'done' 
 export interface SyncStatus {
   state: 'idle' | 'syncing' | 'error';
   phase: SyncPhase;
-  // Number of unresolved "(sync conflict)" pages in the local store, as of the
-  // end of the last successful sync.
+  // Pages that still need a human, as of the end of the last successful sync:
+  // ones holding conflict markers from a merge (see merge.ts), plus legacy
+  // "(sync conflict)" copies.
   conflictCount: number;
+  conflictTitles: string[];
   dirtyCount: number;
   lastSyncedAt: number | null;
   // The remote branch's HEAD commit sha as observed right after the last
