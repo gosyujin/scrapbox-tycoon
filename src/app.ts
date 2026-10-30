@@ -188,17 +188,25 @@ function formatSyncTimestamp(epochSeconds: number): string {
 
 // "<hash>(<time>) [Modified]" -- the last repo commit this device last
 // confirmed it was in sync with, and whether local edits have piled up
-// since then. Shared by the notes-list connection line and the per-page
-// debug line below (see chat: a page edited on one device before another
-// device has pulled the delete/merge that removed it there is exactly the
-// kind of sync-timing bug this is for).
+// since then. Shown in the notes-list connection line.
+//
+// Before this session's first sync finishes there is no commit to show, but
+// "not synced" is only true while nothing has started: once the first sync is
+// running (it begins right at startup) the honest state is "checking the
+// repo's latest commit". After a failed first attempt neither applies.
 function syncCommitBadgeHtml(): string {
   if (!isSyncCapable(store)) return '';
   const status = store.getSyncStatus();
-  const commitText =
-    status.lastSyncedCommitSha && status.lastSyncedAt
-      ? `${status.lastSyncedCommitSha.slice(0, 7)}(${formatSyncTimestamp(status.lastSyncedAt)})`
-      : '(未同期)';
+  let commitText: string;
+  if (status.lastSyncedCommitSha && status.lastSyncedAt) {
+    commitText = `${status.lastSyncedCommitSha.slice(0, 7)}(${formatSyncTimestamp(status.lastSyncedAt)})`;
+  } else if (status.phase === 'starting' || status.phase === 'pulling' || status.phase === 'pushing') {
+    commitText = '(最新コミット確認中…)';
+  } else if (status.phase === 'error') {
+    commitText = '(確認失敗)';
+  } else {
+    commitText = '(未同期)';
+  }
   const modified = status.dirtyCount > 0 ? ` <span class="sync-modified">[Modified]</span>` : '';
   return `<span class="sync-commit">${escapeHtml(commitText)}</span>${modified}`;
 }
@@ -219,7 +227,17 @@ function syncInfoHtml(pageCount: number): string {
     ${syncCommitBadgeHtml()}`;
 }
 
+// Page count the notes list was last rendered with, so its connection line
+// (.sync-line) can be refreshed in place on a status change without
+// re-rendering the whole list.
+let listPageCount = 0;
+
 function updateBadge(): void {
+  // The list renders its connection line once, so without this it would keep
+  // saying "checking..." after the sync finished (a sync that pulled nothing
+  // never triggers a list re-render).
+  const syncLineEl = document.querySelector('.sync-line');
+  if (syncLineEl) syncLineEl.innerHTML = syncInfoHtml(listPageCount);
   if (isSyncCapable(store)) {
     const status = store.getSyncStatus();
     syncStatusEl.className = `sync-status sync-${status.phase}`;
@@ -788,6 +806,7 @@ async function renderPageList(query = ''): Promise<void> {
   const liveValue = liveInput ? liveInput.value : query;
   const liveCaret = liveInput?.selectionStart ?? liveValue.length;
 
+  listPageCount = rows.length;
   app.innerHTML = `
     ${topBar(!!refMeta)}
     <div class="content">
@@ -927,11 +946,6 @@ async function renderPage(title: string): Promise<void> {
       ${mergeBanner}
       ${markerBanner}
       ${refDuplicateBanner}
-      ${
-        isSyncCapable(store) && !isNew
-          ? `<p class="muted sync-page-line">同期: ${syncCommitBadgeHtml()} ・ 更新: ${escapeHtml(formatSyncTimestamp(page.updated))}</p>`
-          : ''
-      }
       <div id="editor"></div>
       ${isNew ? '' : '<p class="page-actions"><button id="delete-page" class="danger">このページを削除</button></p>'}
       <section class="linked">
