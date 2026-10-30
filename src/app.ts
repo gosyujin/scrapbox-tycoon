@@ -187,10 +187,7 @@ function formatSyncTimestamp(epochSeconds: number): string {
 
 // "<hash>(<time>) [Modified]" -- the last repo commit this device last
 // confirmed it was in sync with, and whether local edits have piled up
-// since then. Shared by the notes-list connection line and the per-page
-// debug line below (see chat: a page edited on one device before another
-// device has pulled the delete/merge that removed it there is exactly the
-// kind of sync-timing bug this is for).
+// since then. Shown in the notes-list connection line.
 function syncCommitBadgeHtml(): string {
   if (!isSyncCapable(store)) return '';
   const status = store.getSyncStatus();
@@ -897,11 +894,6 @@ async function renderPage(title: string): Promise<void> {
       ${isNew ? '<p class="muted">新規ページ（最初の行を編集すると保存されます）</p>' : ''}
       ${mergeBanner}
       ${refDuplicateBanner}
-      ${
-        isSyncCapable(store) && !isNew
-          ? `<p class="muted sync-page-line">同期: ${syncCommitBadgeHtml()} ・ 更新: ${escapeHtml(formatSyncTimestamp(page.updated))}</p>`
-          : ''
-      }
       <div id="editor"></div>
       ${isNew ? '' : '<p class="page-actions"><button id="delete-page" class="danger">このページを削除</button></p>'}
       <section class="linked">

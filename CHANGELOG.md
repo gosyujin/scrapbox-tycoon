@@ -2,6 +2,8 @@
 
 1エントリ1〜3行。経緯のあるものは `docs/decisions/` にリンクする。コミットは新しい順。
 
+- 2026-10-30 Removed: ページ画面の「同期: <hash>(<時刻>) ・ 更新: <時刻>」行 (`.sync-page-line`) を削除。描画時のスナップショットで古くなり、ライブ更新される同期バッジ (`#sync-status`) と重複していたため。ページ一覧の最終同期コミット表示は残す。 → [features](docs/features.md)
+
 - 2026-10-29 Added: 同期バッジを段階表示に (待機中 → 同期開始 → 同期中[スピナー・受信/送信] → 完了 / 競合あり / エラー、4 段バーと色付き)。`SyncStatus.phase` / `conflictCount` を追加し、アイドルのポーリングは同期ログに残さないようにした。 → [features](docs/features.md)
 - 2026-10-29 Fixed/Changed: 同期の安全化 (段階1)。push を compare-and-swap 化 (pull〜push の間に他端末が書いたページを上書きしない)、ローカル削除が他端末の編集を消す問題・競合コピー同士の連鎖競合・複数タブの古い meta を修正。編集後 2 秒で push、前面ポーリングを 10 秒に短縮。 → [decisions/12](docs/decisions/12-sync-cas-push.md)
 - 2026-10-28 Changed/Added: ページエディタを textarea から CodeMirror 6 に置換 (クリックした行だけ記法を展開、他は描画済み)。選択ポップアップ (リンク/装飾)、Ctrl+矢印 (行) / Alt+矢印 (段落) のアウトライン移動・インデント、スマホでキーボードに隠れないキャレット追従を追加。 → [decisions/11](docs/decisions/11-codemirror-editor.md)
