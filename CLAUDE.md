@@ -92,4 +92,5 @@
   - `cm-editor/` は tsc の対象外 (bare import を解決できないため)。esbuild で `js/cm-editor.js` にバンドルされ、`src/editor.ts` が `import('./cm-editor.js?v=…')` で遅延ロードする。ここを `src/` に移したり、静的 import にしない。
   - エディタの CSS は `.sbe` 配下 / `sbe-` 接頭辞のみ (`cm-editor/style.ts`)。parser.ts と共通の装飾クラス (`sb-h1` 等) は style.css 側で定義済みなので再定義しない。
   - 1行目が空になったページは "Untitled" (衝突時 `uniqueTitle()` で `_N`) にリネームし、`/^Untitled(_\d+)?$/` なら現在のタイトルを維持する (無変更の blur で番号が増え続けないため)。
+- エディタのインデント (`cm-editor/style.ts` の `.sbe-ws`): 空白 1 文字 = 1 セルは `letter-spacing` で作る。`inline-block` に戻すとキャレットがセル内にずれ、`white-space: pre` を外すと長い URL でバレットが孤立する ([technical-notes #10](docs/technical-notes.md))。
 - 既存データの修復方法: [docs/troubleshooting.md](docs/troubleshooting.md) (修正は保存済みデータを遡って直さない)

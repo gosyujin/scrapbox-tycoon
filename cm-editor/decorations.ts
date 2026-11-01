@@ -9,7 +9,7 @@
 //
 // The text itself is never rewritten -- only decorated -- so copy, undo and
 // the saved document are always the raw Scrapbox notation.
-import { EditorState, StateEffect, StateField, type Range } from '@codemirror/state';
+import { EditorState, StateEffect, StateField, type Range, type Text } from '@codemirror/state';
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view';
 import { blockAt, findBlocks, splitIndent } from './blocks';
 import { linkConfig } from './config';
@@ -247,10 +247,16 @@ function lineDeco(classes: string[], depth: number): Decoration {
 }
 
 // One 1.2em-wide cell per leading whitespace character, on every line --
-// active or not -- so expanding a line never shifts its indentation.
-function indentCells(ctx: Ctx, lineFrom: number, cells: number): void {
+// active or not -- so expanding a line never shifts its indentation. The
+// characters stay ordinary text (sized by letter-spacing, see style.ts), not
+// inline-blocks: the caret then lands on the cell edges, not inside the cell.
+const wsCell = Decoration.mark({ class: 'sbe-ws' });
+const wsCellWide = Decoration.mark({ class: 'sbe-ws sbe-ws-w' });
+const wsCellTab = Decoration.mark({ class: 'sbe-ws sbe-ws-t' });
+function indentCells(ctx: Ctx, doc: Text, lineFrom: number, cells: number): void {
   for (let k = 0; k < cells; k++) {
-    ctx.out.push(Decoration.mark({ class: 'sbe-ws' }).range(lineFrom + k, lineFrom + k + 1));
+    const ch = doc.sliceString(lineFrom + k, lineFrom + k + 1);
+    ctx.out.push((ch === '\u3000' ? wsCellWide : ch === '\t' ? wsCellTab : wsCell).range(lineFrom + k, lineFrom + k + 1));
   }
 }
 
@@ -305,7 +311,7 @@ function build(state: EditorState): DecorationSet {
       }
       const base = n === block.head ? block.depth : block.depth + 1;
       out.push(lineDeco(['sbe-line', 'sbe-code-line', n === block.head ? 'sbe-code-head' : 'sbe-table-raw'], base).range(line.from));
-      indentCells(ctx, line.from, base);
+      indentCells(ctx, doc, line.from, base);
       if (n === block.head) {
         const content = line.text.slice(block.depth);
         const prefix = content.indexOf(':') + 1;
@@ -319,7 +325,7 @@ function build(state: EditorState): DecorationSet {
       const isHead = n === block.head;
       const cells = isHead ? block.depth : block.depth + 1;
       out.push(lineDeco(['sbe-line', 'sbe-code-line', isHead ? 'sbe-code-head' : 'sbe-code-body'], cells).range(line.from));
-      indentCells(ctx, line.from, cells);
+      indentCells(ctx, doc, line.from, cells);
       if (isHead) {
         const prefix = line.text.slice(block.depth).indexOf(':') + 1;
         syntax(ctx, line.from + block.depth, line.from + block.depth + prefix);
@@ -335,7 +341,7 @@ function build(state: EditorState): DecorationSet {
     const isQuote = n > 1 && content.startsWith('>');
     if (isQuote) classes.push('sbe-quote');
     out.push(lineDeco(classes, n === 1 ? 0 : depth).range(line.from));
-    if (n > 1) indentCells(ctx, line.from, depth);
+    if (n > 1) indentCells(ctx, doc, line.from, depth);
 
     let inlineFrom = line.from + depth;
     if (isQuote) {

@@ -34,7 +34,9 @@ export const EDITOR_CSS = `
 /* Outline indent: one cell per leading whitespace character (on the active
    line too, so expanding a line never shifts its text), a bullet in the last
    cell, and wrapped lines hang under the text. */
-.sbe .sbe-ws { display: inline-block; width: var(--cell); overflow: hidden; white-space: pre; vertical-align: bottom; }
+.sbe .sbe-ws { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; letter-spacing: calc(var(--cell) - 1ch); }
+.sbe .sbe-ws-w { letter-spacing: calc(var(--cell) - 1em); } /* U+3000 is 1em wide, not 1ch */
+.sbe .sbe-ws-t { letter-spacing: 0; tab-size: var(--cell); } /* a tab stops on every cell edge */
 .sbe .cm-line > * { text-indent: 0; } /* inline-block widgets must not inherit the hanging indent */
 .sbe .cm-line.sbe-indented,
 .sbe .cm-line.sbe-code-line {
@@ -66,6 +68,15 @@ export const EDITOR_CSS = `
 /* code: / table: blocks */
 .sbe .cm-line.sbe-code-line { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; background: var(--code-bg); }
 .sbe .cm-line.sbe-code-head { color: var(--muted); font-size: 12px; }
+/* A guide where the code text starts: whitespace left of it is the outline
+   indent (one wide cell per char), whitespace right of it is the code's own
+   indentation (one monospace column per char). */
+.sbe .cm-line.sbe-code-body {
+  background-image: linear-gradient(rgba(128, 128, 128, 0.45), rgba(128, 128, 128, 0.45));
+  background-repeat: no-repeat;
+  background-size: 2px 100%;
+  background-position: calc(var(--pad) + var(--depth) * var(--cell) - 0.2em) 0;
+}
 .sbe .sbe-code-name { color: var(--muted); }
 .sbe .cm-line.sbe-table-raw { tab-size: 4; }
 .sbe .sbe-table-wrap { padding: 0.2em 0.3em; overflow-x: auto; cursor: text; }
