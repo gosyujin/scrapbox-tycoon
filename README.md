@@ -3,7 +3,7 @@
 Scrapbox 風のローカルファースト・ノートアプリ。編集内容はまず `LocalStore`
 (localStorage) に即書き込まれ、`GitHubSyncStore` がバックグラウンドで
 GitHub リポジトリ (`gosyujin/scrapbox-tycoon-notes`) にまとめてコミットする。
-本体は `https://note.gosyujin.com/scrapbox-tycoon/` (GitHub Pages) にデプロイ。
+本体は `https://gosyujin.com/scrapbox-tycoon/` (GitHub Pages) にデプロイ。
 
 ## 機能
 
