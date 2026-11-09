@@ -88,4 +88,6 @@ export const EDITOR_CSS = `
 /* The popup element is itself the .cm-tooltip, so it must restate the pill
    look to beat CodeMirror's default tooltip border/background. */
 .sbe .cm-tooltip.sbe-popup { border: none; background: var(--fg); flex-wrap: wrap; max-width: calc(100vw - 16px); }
+/* the button the keyboard (Tab / digits) is on -- cm-editor/shortcuts.ts */
+.sbe .sbe-popup .selection-toolbar-btn.sbe-popup-active { background: rgba(255, 255, 255, 0.25); box-shadow: inset 0 -2px 0 var(--bg); }
 `;

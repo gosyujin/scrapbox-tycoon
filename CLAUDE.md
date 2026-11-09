@@ -93,4 +93,9 @@
   - エディタの CSS は `.sbe` 配下 / `sbe-` 接頭辞のみ (`cm-editor/style.ts`)。parser.ts と共通の装飾クラス (`sb-h1` 等) は style.css 側で定義済みなので再定義しない。
   - 1行目が空になったページは "Untitled" (衝突時 `uniqueTitle()` で `_N`) にリネームし、`/^Untitled(_\d+)?$/` なら現在のタイトルを維持する (無変更の blur で番号が増え続けないため)。
 - エディタのインデント (`cm-editor/style.ts` の `.sbe-ws`): 空白 1 文字 = 1 セルは `letter-spacing` で作る。`inline-block` に戻すとキャレットがセル内にずれ、`white-space: pre` を外すと長い URL でバレットが孤立する ([technical-notes #10](docs/technical-notes.md))。
+- キー操作 (`src/keymap.ts` / `src/shortcuts.ts` / `cm-editor/shortcuts.ts`): [decisions/14](docs/decisions/14-scrapboxshortcutkey-integration.md)
+  - コンボの正規化は ScrapboxShortcutKey (UserScript) と同じ文字列にならないと、UserScript の登録が既定の割り当てを置き換えず二重になる。ハンドラは `false` を返すとキーを握りつぶし、それ以外は既定動作に流す。IME 変換中 (`isComposing` / `keyCode 229`) と `key` の無い合成イベントは `Keymap` が無視する。
+  - edit コンテキストは `cm-editor/index.ts` の `Prec.highest` keydown で受ける。`document` に keydown を足して `i`/`o` 等を処理しない (`installGlobalKeys` と二重発火する)。
+- ページツールバー・pin・複製 (`app.ts` の `pageToolsHtml` / `wirePageTools`, `src/pins.ts`): [decisions/15](docs/decisions/15-page-menu-pin-duplicate.md)
+  - pin は端末ローカル (localStorage) で **Page レコードに入れない** (入れると同期層の no-op 判定・pull の内容同一判定・3-way マージ・push CAS の全部に手が入る)。ツールバーのボタンは `mousedown` を `preventDefault` してエディタを blur (= commit) させない。
 - 既存データの修復方法: [docs/troubleshooting.md](docs/troubleshooting.md) (修正は保存済みデータを遡って直さない)

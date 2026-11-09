@@ -121,12 +121,39 @@ fail することを確認済み)、`test/diff.test.mjs`。
 
 - **テロメア (行の最終編集時刻)**: 実機未確認。(1) スマホで 2 台間の同期後に時刻がそろうか、(2) 長いページでの入力時の重さ
   (`telomere.ts` はキー入力ごとに変更範囲だけ走査、保存時の `reconcileLineTimes` は行 diff)、(3) 行の移動 (Ctrl+↑↓) は「削除+追加」扱いで新しい時刻になる点が許容できるか。
+- **ScrapboxShortcutKey 流のキー操作 (decisions/14)**: Chrome (デスクトップ) で Tab / Shift+Tab / Enter / 数字による
+  ポップアップ操作、Ctrl+Q / Ctrl+Enter / Ctrl+; / Ctrl+Shift+Enter、`i` / `o`、Shift+H / Shift+N、
+  `window.tycoonShortcut.onEditin` による上書きを実キー入力で確認済み。未確認: (1) **実際の IME 変換中**のキー
+  (自動テストは `isComposing` / `keyCode 229` を無視することまで。変換中の Tab / Enter は従来どおり CodeMirror 側の処理)、
+  (2) ランダムジャンプ (Alt+Q / Ctrl+1) は参照プロジェクトを読み込んだ状態で未実行、(3) UserScript 側の変更は未適用
+  なので UserScript と組み合わせた動作は未確認、(4) 外付けキーボードの iPad。
+- **ページツールバー・pin・複製 (decisions/15)**: Chrome (デスクトップ幅 / 375px のスマホ幅エミュレーション) で配置、メニューの
+  ピン留め・複製・削除、`alt+p`、一覧の先頭表示を確認済み。未確認: (1) 実機 (iOS Safari) でのタップ操作・メニューの位置、
+  (2) pin は端末ごと (同期しない) で、PC とスマホで別になるのが許容できるか、(3) 複製のタイトル規則 (`(copy)`) が本家の複製に合っているか、
+  (4) 本家の編集メニューの項目の並び (閲覧専用ページでは見えなかったため知識ベース)。
 
 ## 既知の制限・未解決
 
 - 個別ページを開いている間は、他デバイスの更新を自動反映しない (編集中の上書きを避けるため。一覧のみ自動再描画)。
 - 実機 (スマホ PWA のバックグラウンド遷移時の即送信、バッジのタップ) は未確認。
 - 「branch moved during save」の根本原因の特定は棚上げ。経緯は [decisions/02-sync-failure-unhandled-rejection.md](decisions/02-sync-failure-unhandled-rejection.md) の「調査の経緯」を参照。
+
+### 残件 (キー操作・ページツールバー、2026-11-09 時点)
+
+実装済みの範囲は [decisions/14](decisions/14-scrapboxshortcutkey-integration.md) と [decisions/15](decisions/15-page-menu-pin-duplicate.md)。
+以下は意図して後回しにしたもの。
+
+- **ScrapboxShortcutKey (UserScript) 側の変更が未適用**: tycoon 側の窓口 (`window.tycoonShortcut`) は出荷済みだが、UserScript
+  を tycoon 上で動かす変更 (`@match` 追加、tycoon 上では自前の keydown 受けを付けない、`keybindings` の値を `impl.*` で引く、
+  tycoon に無い機能の登録スキップ) は別リポジトリなので未着手。案は decisions/14 の「UserScript 側で必要な変更」。
+  適用後に、UserScript と組み合わせた実ブラウザ確認 (二重発火しないか、UserScript 側のキー変更が tycoon に反映されるか) が要る。
+- **ポップアップの記号キー (`"` `>` `+` `~` `#` `.`)**: Scrapbox の引用・箇条書き等のボタンが tycoon のポップアップに無いため未割り当て。
+  ボタンを足し、`cm-editor/shortcuts.ts` の `POPUP_SYMBOL_LABELS` に「キー → ボタン名」を入れれば効く。
+- **pin の同期**: 今は端末ローカル。全端末で揃えるなら Page フィールドか別ファイル (`pins.json`) で、同期層の no-op 判定・pull の内容同一判定・3-way マージ・push CAS の見直しが要る (decisions/15)。
+- **ランダムの対象**: 参照プロジェクトのみ。本家のように自分のノートも含めるかは未決。
+- **複製のタイトル規則・本家の編集メニューの並び**: 本家で確認できていない (閲覧専用ページでは編集メニューが見えない)。編集権限のあるプロジェクトで要確認。
+- **本家のページ情報 (i) アイコン**: ツールバーに未実装 (作成/更新日時、行数などを出す場所として本家にある)。
+- **実機確認**: IME 変換中のキー、iOS Safari でのツールバー・メニューのタップ、外付けキーボードの iPad (上の「未検証」)。
 
 ## テスト手法上の注意
 

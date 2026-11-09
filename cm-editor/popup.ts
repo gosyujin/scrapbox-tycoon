@@ -9,10 +9,12 @@ import { FORMAT_ACTIONS, wrapSelection } from './format';
 
 const coarsePointer = (): boolean => window.matchMedia('(pointer: coarse)').matches;
 
-function button(label: string, title: string, onClick: () => void): HTMLButtonElement {
+// data-action marks what a button does, for the keyboard (shortcuts.ts).
+function button(label: string, title: string, action: string, onClick: () => void): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'selection-toolbar-btn';
+  b.dataset.action = action;
   b.textContent = label;
   b.title = title;
   b.addEventListener('click', onClick);
@@ -44,8 +46,8 @@ export function selectionPopup(extract: (view: EditorView) => void): Extension {
           // collapse the selection before the click lands). Not touchstart:
           // cancelling that would also cancel the click on iOS.
           dom.addEventListener('mousedown', (e) => e.preventDefault());
-          for (const a of FORMAT_ACTIONS) dom.append(button(a.label, a.title, () => wrapSelection(view, a.open, a.close)));
-          dom.append(button('ページ切り出し', '選択範囲を新しいページに切り出してリンクする', () => extract(view)));
+          for (const a of FORMAT_ACTIONS) dom.append(button(a.label, a.title, 'format', () => wrapSelection(view, a.open, a.close)));
+          dom.append(button('ページ切り出し', '選択範囲を新しいページに切り出してリンクする', 'extract', () => extract(view)));
           return { dom };
         },
       };

@@ -1,6 +1,8 @@
 // Public shape of the page editor, shared by src/editor.ts (the thin loader
 // app.ts talks to) and cm-editor/ (the CodeMirror implementation, bundled
 // separately -- see scripts/build-cm-editor.mjs).
+import type { ShortcutRegistry } from './shortcuts.js';
+
 export interface EditorOptions {
   container: HTMLElement;
   lines: string[];
@@ -20,5 +22,8 @@ export interface EditorOptions {
   // Called when the user uses the selection popup's "ページ切り出し" button.
   // `lines` is the new page's content (lines[0] is its title). The caller
   // creates the page; the editor only replaces the selection with a link.
+  // Keyboard shortcuts (src/shortcuts.ts): the editor registers itself as the
+  // target of the 'edit' context and routes its keydowns through it.
+  shortcuts?: ShortcutRegistry;
   onExtractPage?: (title: string, lines: string[]) => void | Promise<void>;
 }

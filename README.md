@@ -9,6 +9,8 @@ GitHub リポジトリ (`gosyujin/scrapbox-tycoon-notes`) にまとめてコミ�
 
 - Scrapbox 記法のページ編集 (CodeMirror 6: クリックした行だけ記法が展開される)、ページ一覧のカード表示
 - ローカルファースト保存 (localStorage) と GitHub へのバックグラウンド同期
+- ページツールバー (ページメニュー: ピン留め/複製/削除、ランダム) を本家 Scrapbox の配置で提供
+- ScrapboxShortcutKey 流のキー操作 (ポップアップのキー操作・ランダム/ホーム/新規など)。`window.tycoonShortcut` で UserScript と連携
 - テロメア (行ごとの最終編集時刻を左端のバーの濃さで表示)
 - 同期ステータス履歴のコピー (デバッグ用)
 - 同期競合の退避 (「(sync conflict)」ページ) と競合バナー・行単位 diff

@@ -794,13 +794,66 @@ blockquote.sb-quote {
 .conflict-diff .diff-removed { display: block; background: rgba(178, 59, 59, 0.18); }
 .conflict-diff .diff-same { display: block; color: var(--muted); }
 
-.page-actions { margin: 16px 0 0; text-align: right; }
-.page-actions button.danger {
-  padding: 5px 12px;
-  border-radius: 5px;
-  border: 1px solid var(--link-missing);
-  background: transparent;
-  color: var(--link-missing);
-  font-size: 13px;
+/* Page toolbar: page menu + random, like Scrapbox's icon column to the right
+   of the page card. Narrow screens: the same icons in a row above the card. */
+.page-frame { position: relative; }
+.page-tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+@media (min-width: 960px) {
+  .page-tools {
+    position: absolute;
+    top: 0;
+    left: 100%;
+    margin: 0 0 0 10px;
+    flex-direction: column;
+  }
+}
+.tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
   cursor: pointer;
 }
+.tool-btn:hover,
+.tool-btn[aria-expanded="true"] { background: var(--accent); color: var(--fg); }
+.page-menu-wrap { position: relative; }
+.page-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 15;
+  min-width: 12em;
+  padding: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+.page-menu[hidden] { display: none; }
+.page-menu button {
+  display: block;
+  width: 100%;
+  padding: 9px 16px;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.page-menu button:hover { background: var(--accent); }
+.page-menu button.danger { color: var(--link-missing); }
+.page-card-pin { font-size: 0.85em; }

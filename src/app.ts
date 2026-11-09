@@ -19,6 +19,8 @@ import {
 } from './store/reference-store.js';
 import { normalizeLineTimes, reconcileLineTimes } from './line-times.js';
 import { makeVisitTracker } from './visit-tracking.js';
+import { makePinStore } from './pins.js';
+import { createShortcuts, exposeShortcuts, installGlobalKeys } from './shortcuts.js';
 import { matchQuery } from './search.js';
 import type { Page, Store, SyncCapable, SyncPhase, SyncStatus } from './types.js';
 
@@ -336,6 +338,7 @@ function navigate(hash: string): void {
 }
 
 async function route(): Promise<void> {
+  pageMenuActions = null; // set again by renderPage for a saved note page
   const hash = location.hash || '#/';
   updateBadge();
 
@@ -364,13 +367,15 @@ window.addEventListener('hashchange', () => {
 // of the topbar -- same layout as gyazo-tycoon-viewer's #sbar. position:
 // fixed means its place in this markup doesn't matter, and it's rebuilt
 // with the rest of #app on every render like the topbar always was.
-function topBar(hasRef: boolean): string {
+// `showRandom`: pages carry their own 🔀 in the page toolbar (like Scrapbox), so
+// their top bar leaves it out.
+function topBar(hasRef: boolean, showRandom = true): string {
   return `
     <div class="topbar">
       <a href="#/" class="brand">scrapbox-tycoon</a>
       <nav>
         ${hasRef ? '<a href="#/ref" title="参照一覧" aria-label="参照一覧">📖</a>' : ''}
-        <button id="random-btn" class="nav-btn" type="button" title="ランダム" aria-label="ランダム">🔀</button>
+        ${showRandom ? '<button id="random-btn" class="nav-btn" type="button" title="ランダム" aria-label="ランダム">🔀</button>' : ''}
         <a href="#/settings" title="設定" aria-label="設定">⚙️</a>
       </nav>
     </div>
@@ -408,6 +413,10 @@ trackKeyboardInset();
 // still reachable from the home page's reference section). One retry if
 // the pick happens to be the page already open, so the button doesn't
 // visibly do nothing on a lucky/unlucky repeat.
+function randomJump(): void {
+  goToRandomReferencePage().catch((e: unknown) => console.error('random jump failed', e));
+}
+
 async function goToRandomReferencePage(): Promise<void> {
   const titles = await getAllReferenceTitles();
   if (titles.length === 0) return;
@@ -494,7 +503,7 @@ function wireQuickOpen(): void {
   const input = document.getElementById('quick-open') as HTMLInputElement;
   const addBtn = document.getElementById('quick-add') as HTMLButtonElement;
   const dropdown = document.getElementById('quick-open-dropdown') as HTMLDivElement;
-  document.getElementById('random-btn')!.addEventListener('click', () => {
+  document.getElementById('random-btn')?.addEventListener('click', () => {
     void goToRandomReferencePage();
   });
   let composing = false;
@@ -637,6 +646,7 @@ interface NoteRow {
   description: string;
   // Holds unresolved conflict markers from a sync merge (see merge.ts).
   conflict?: boolean;
+  pinned?: boolean;
   created: number;
   updated: number;
 }
@@ -672,13 +682,13 @@ async function loadNoteRows(query: string): Promise<NoteRow[]> {
 // `direction`, when given (1-hop linked pages only -- see renderLinkedPages),
 // shows which way the link between this page and the current one goes:
 // → this page links to it, ← it links to this page, ⇔ both.
-type PageCardItem = { title: string; description: string; direction?: string; conflict?: boolean };
+type PageCardItem = { title: string; description: string; direction?: string; conflict?: boolean; pinned?: boolean };
 
 function pageCardHtml(p: PageCardItem, linkBase: string): string {
   return `
       <a class="page-card" href="${linkBase}${encodeURIComponent(p.title)}">
         ${p.direction ? `<span class="page-card-dir">${p.direction}</span>` : ''}
-        <div class="page-card-title">${p.conflict ? '<span class="page-card-warn">⚠ 競合</span> ' : ''}${escapeHtml(p.title)}</div>
+        <div class="page-card-title">${p.pinned ? '<span class="page-card-pin" title="ピン留め" aria-label="ピン留め">📌</span> ' : ''}${p.conflict ? '<span class="page-card-warn">⚠ 競合</span> ' : ''}${escapeHtml(p.title)}</div>
         <div class="page-card-desc">${escapeHtml(p.description)}</div>
       </a>`;
 }
@@ -773,7 +783,10 @@ function compareNoteRows(sort: NoteSortKey, linkCounts: Map<string, number> | nu
 async function renderPageList(query = ''): Promise<void> {
   let rows = await loadNoteRows(query);
   const linkCounts = homeNoteSort === 'linked' ? await computeNoteLinkCounts() : null;
-  rows = rows.slice().sort(compareNoteRows(homeNoteSort, linkCounts));
+  // Pinned pages first (device-local, see pins.ts), the chosen sort inside each group.
+  rows = pins
+    .floatPinned(rows.slice().sort(compareNoteRows(homeNoteSort, linkCounts)))
+    .map((r) => (pins.isPinned(r.title) ? { ...r, pinned: true } : r));
 
   const refMeta = await getReferenceMeta();
   let refSummaries: PageCardItem[] = [];
@@ -862,6 +875,100 @@ async function uniqueTitle(base: string): Promise<string> {
   return `${base}_${n}`;
 }
 
+// --- Page toolbar: the icon column to the right of the page card, as in
+// Scrapbox -- a page menu (pin / duplicate / delete) and random jump. Narrow
+// screens put the same icons in a row above the card (css: .page-tools).
+// Pin state is device-local: see pins.ts / decisions/15.
+const pins = makePinStore('scrapbox_tycoon_pins_v1');
+
+interface PageMenuActions {
+  pin(): boolean;
+  duplicate(): boolean;
+  deletePage(): boolean;
+}
+// The menu actions of the saved note page on screen, for the keyboard (alt+p).
+let pageMenuActions: PageMenuActions | null = null;
+
+// Material icons ("description" and "shuffle"), as in Scrapbox's toolbar.
+const ICON_PAGE =
+  '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>';
+const ICON_RANDOM =
+  '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>';
+
+function pageToolsHtml(withMenu: boolean): string {
+  return `
+    <div class="page-tools">
+      ${
+        withMenu
+          ? `<div class="page-menu-wrap">
+               <button id="page-menu-btn" class="tool-btn" type="button" title="ページメニュー" aria-label="ページメニュー" aria-haspopup="menu" aria-expanded="false">${ICON_PAGE}</button>
+               <div id="page-menu" class="page-menu" role="menu" hidden>
+                 <button type="button" role="menuitem" data-act="pin">ピン留めする</button>
+                 <button type="button" role="menuitem" data-act="duplicate">ページを複製</button>
+                 <button type="button" role="menuitem" data-act="delete" class="danger">ページを削除</button>
+               </div>
+             </div>`
+          : ''
+      }
+      <button id="page-random" class="tool-btn" type="button" title="ランダム" aria-label="ランダム">${ICON_RANDOM}</button>
+    </div>`;
+}
+
+// A click or Escape anywhere else closes the page menu. One listener for the
+// life of the app (the toolbar itself is rebuilt on every render).
+function closePageMenu(): void {
+  const menu = document.getElementById('page-menu');
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  document.getElementById('page-menu-btn')?.setAttribute('aria-expanded', 'false');
+}
+document.addEventListener('click', (e) => {
+  if (!(e.target as Element).closest('.page-menu-wrap')) closePageMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closePageMenu();
+});
+
+function wirePageTools(actions: PageMenuActions | null): void {
+  // A press on these must not blur (= commit) the editor first: the actions
+  // decide for themselves whether the text needs saving.
+  const keepFocus = (e: Event): void => e.preventDefault();
+  const random = document.getElementById('page-random');
+  random?.addEventListener('mousedown', keepFocus);
+  random?.addEventListener('click', () => shortcuts.leave(randomJump));
+  const btn = document.getElementById('page-menu-btn');
+  const menu = document.getElementById('page-menu');
+  if (!btn || !menu || !actions) return;
+  btn.addEventListener('mousedown', keepFocus);
+  menu.addEventListener('mousedown', keepFocus);
+  btn.addEventListener('click', () => {
+    menu.hidden = !menu.hidden;
+    btn.setAttribute('aria-expanded', String(!menu.hidden));
+  });
+  menu.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+    closePageMenu();
+    if (act === 'pin') actions.pin();
+    else if (act === 'duplicate') actions.duplicate();
+    else if (act === 'delete') actions.deletePage();
+  });
+}
+
+// "<title> (copy)" (then _2, _3 ... when taken): the same content under a new
+// title, opened right away. Line times carry over -- the text is as old as it was.
+async function duplicatePage(title: string): Promise<void> {
+  const source = await store.getPage(title);
+  if (!source) return;
+  let copyTitle = `${title} (copy)`;
+  if (await store.getPage(copyTitle)) copyTitle = await uniqueTitle(copyTitle);
+  await store.savePage({
+    title: copyTitle,
+    lines: [copyTitle, ...source.lines.slice(1)],
+    ...(source.lineTimes ? { lineTimes: source.lineTimes } : {}),
+  });
+  navigate(`#/page/${encodeURIComponent(copyTitle)}`);
+}
+
 async function renderPage(title: string): Promise<void> {
   const existing = await store.getPage(title);
   const isNew = !existing;
@@ -941,14 +1048,16 @@ async function renderPage(title: string): Promise<void> {
     : '';
 
   app.innerHTML = `
-    ${topBar(referenceTitles.size > 0)}
+    ${topBar(referenceTitles.size > 0, false)}
     <div class="content page-content">
       ${isNew ? '<p class="muted">新規ページ（最初の行を編集すると保存されます）</p>' : ''}
       ${mergeBanner}
       ${markerBanner}
       ${refDuplicateBanner}
-      <div id="editor"></div>
-      ${isNew ? '' : '<p class="page-actions"><button id="delete-page" class="danger">このページを削除</button></p>'}
+      <div class="page-frame">
+        ${pageToolsHtml(!isNew)}
+        <div id="editor"></div>
+      </div>
       <section class="linked">
         <h3 id="linked-heading">リンク</h3>
         <div id="backlinks">読み込み中...</div>
@@ -982,6 +1091,7 @@ async function renderPage(title: string): Promise<void> {
         const mergedLines = [...target.lines, ...separator, ...page.lines.slice(1)];
         await store.savePage({ title: targetTitle, lines: mergedLines });
         await store.deletePage(title);
+        pins.unpin(title);
         navigate(`#/page/${encodeURIComponent(targetTitle)}`);
       } else {
         // The target page is gone (deleted meanwhile) -> nothing to merge into.
@@ -1006,6 +1116,7 @@ async function renderPage(title: string): Promise<void> {
     document.getElementById('conflict-discard')?.addEventListener('click', async () => {
       if (!conflictIdentical && !confirm('このコピーにしかない内容は失われます。削除しますか？')) return;
       await store.deletePage(title);
+      pins.unpin(title);
       navigate(`#/page/${encodeURIComponent(targetTitle)}`);
     });
     document.getElementById('merge-dismiss')!.addEventListener('click', async () => {
@@ -1034,19 +1145,54 @@ async function renderPage(title: string): Promise<void> {
   // being torn down) can't save the page straight back.
   let pageDeleted = false;
 
-  document.getElementById('delete-page')?.addEventListener('mousedown', (e) => e.preventDefault()); // don't blur (=commit) the editor first
-  document.getElementById('delete-page')?.addEventListener('click', async () => {
-    if (!confirm(`"${currentTitle}" を削除しますか？この操作は元に戻せません。`)) return;
-    pageDeleted = true;
-    await store.deletePage(currentTitle);
-    navigate('#/');
-  });
+  // The page menu's items (and their keyboard shortcuts, see shortcuts.ts).
+  // Each returns false when there is no saved page to act on.
+  const setPinLabel = (): void => {
+    const item = document.querySelector('#page-menu [data-act="pin"]');
+    if (item) item.textContent = pins.isPinned(currentTitle) ? 'ピン留めを外す' : 'ピン留めする';
+  };
+  setPinLabel();
+  const menuActions: PageMenuActions = {
+    pin: () => {
+      if (!existsLocally) return false;
+      pins.toggle(currentTitle);
+      setPinLabel();
+      return true;
+    },
+    duplicate: () => {
+      if (!existsLocally) return false;
+      // Reads the saved page back, so edits still in the editor are saved first.
+      shortcuts.leave(() => {
+        duplicatePage(currentTitle).catch((e: unknown) => console.error('duplicate failed', e));
+      });
+      return true;
+    },
+    deletePage: () => {
+      if (!existsLocally) return false;
+      if (!confirm(`"${currentTitle}" を削除しますか？この操作は元に戻せません。`)) return true;
+      // So a late editor commit (blur while the page is being torn down)
+      // can't save the page straight back.
+      pageDeleted = true;
+      const gone = currentTitle;
+      store
+        .deletePage(gone)
+        .then(() => {
+          pins.unpin(gone);
+          navigate('#/');
+        })
+        .catch((e: unknown) => console.error('delete failed', e));
+      return true;
+    },
+  };
+  pageMenuActions = menuActions;
+  wirePageTools(menuActions);
 
   const knownTitles = new Set((await store.listPages()).map((p) => p.title.toLowerCase()));
 
   const editorEl = document.getElementById('editor') as HTMLElement;
   new Editor({
     container: editorEl,
+    shortcuts,
     lines: page.lines,
     lineTimes: normalizeLineTimes(page.lines, page.lineTimes, isNew ? Math.floor(Date.now() / 1000) : page.updated),
     knownTitles,
@@ -1096,6 +1242,7 @@ async function renderPage(title: string): Promise<void> {
 
       if (newTitle !== currentTitle) {
         if (existsLocally) await store.deletePage(currentTitle);
+        pins.rename(currentTitle, newTitle);
         history.replaceState(null, '', `#/page/${encodeURIComponent(newTitle)}`);
         // Rebuild the page from what was actually saved rather than just
         // updating the URL: on a collision, the saved title/content
@@ -1268,10 +1415,13 @@ async function renderReferencePage(title: string): Promise<void> {
   refVisits.recordVisit(title);
 
   app.innerHTML = `
-    ${topBar(true)}
+    ${topBar(true, false)}
     <div class="content page-content">
       ${referenceBanner(meta)}
-      <div id="ref-view"></div>
+      <div class="page-frame">
+        ${pageToolsHtml(false)}
+        <div id="ref-view"></div>
+      </div>
       <section class="linked">
         <h3 id="ref-linked-heading">リンク</h3>
         <div id="ref-backlinks">読み込み中...</div>
@@ -1280,6 +1430,7 @@ async function renderReferencePage(title: string): Promise<void> {
       </section>
     </div>`;
   wireQuickOpen();
+  wirePageTools(null);
 
   const viewEl = document.getElementById('ref-view') as HTMLElement;
   const knownTitles = await getReferenceTitles();
@@ -1490,6 +1641,19 @@ async function loadBuildInfo(): Promise<void> {
     el.textContent = '(dev / unknown)';
   }
 }
+
+// Keyboard shortcuts in the style of the ScrapboxShortcutKey UserScript
+// (src/shortcuts.ts). Needs goToRandomReferencePage / navigate, so it lives here.
+const shortcuts = createShortcuts({
+  random: randomJump,
+  home: () => navigate('#/'),
+  newPage: () => navigate('#/page/'),
+  pin: () => pageMenuActions?.pin() ?? false,
+  duplicate: () => pageMenuActions?.duplicate() ?? false,
+  deletePage: () => pageMenuActions?.deletePage() ?? false,
+});
+installGlobalKeys(shortcuts);
+exposeShortcuts(shortcuts);
 
 void route();
 void loadBuildInfo();

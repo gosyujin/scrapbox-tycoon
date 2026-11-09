@@ -30,6 +30,7 @@ import { selectionPopup } from './popup';
 import { telomere } from './telomere';
 import { EDITOR_CSS } from './style';
 import { wrapSelection } from './format';
+import { editorApi } from './shortcuts';
 
 const STYLE_ID = 'sbe-style';
 
@@ -41,11 +42,8 @@ function ensureStyle(): void {
   document.head.appendChild(style);
 }
 
-const isEditable = (el: Element | null): boolean =>
-  !!el && ((el as HTMLElement).isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
-
 export function createEditor(opts: EditorOptions): void {
-  const { container, onChange, onExtractPage, knownTitles, fallback } = opts;
+  const { container, onChange, onExtractPage, knownTitles, fallback, shortcuts } = opts;
   ensureStyle();
 
   container.textContent = '';
@@ -124,7 +122,9 @@ export function createEditor(opts: EditorOptions): void {
             },
           ])
         ),
-        keymap.of([...closeBracketsKeymap, ...historyKeymap, ...defaultKeymap]),
+        // Mod-Enter (insert blank line) would also fire after the Ctrl+Enter
+        // shortcut ('[' insert, shortcuts.ts) on Windows / Linux.
+        keymap.of([...closeBracketsKeymap, ...historyKeymap, ...defaultKeymap.filter((b) => b.key !== 'Mod-Enter')]),
         EditorView.lineWrapping,
         EditorView.contentAttributes.of({ spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off' }),
         liveRender,
@@ -134,6 +134,15 @@ export function createEditor(opts: EditorOptions): void {
         EditorView.updateListener.of((u) => {
           if (u.docChanged) dirty = true;
         }),
+        // ScrapboxShortcutKey-style keys (src/shortcuts.ts, 'edit' context) get
+        // the first look at every keydown, before the keymaps above; a key the
+        // table does not use (or whose handler returns true) falls through.
+        // Keys during IME composition never match (keymap.ts).
+        Prec.highest(
+          EditorView.domEventHandlers({
+            keydown: (e) => !!shortcuts?.dispatch('edit', e),
+          })
+        ),
         EditorView.domEventHandlers({
           // Following a link: a plain click on a rendered (inactive) line, or
           // ctrl/cmd+click anywhere. On the active line a plain click edits
@@ -178,30 +187,13 @@ export function createEditor(opts: EditorOptions): void {
   const onHidden = (): void => {
     if (!view.dom.isConnected) {
       document.removeEventListener('visibilitychange', onHidden);
-      document.removeEventListener('keydown', onKey);
       return;
     }
     if (document.visibilityState === 'hidden' && dirty) void commit();
   };
-  // vim-flavored "press i / o to start editing" when nothing else has focus.
-  const onKey = (e: KeyboardEvent): void => {
-    if (!view.dom.isConnected) {
-      document.removeEventListener('visibilitychange', onHidden);
-      document.removeEventListener('keydown', onKey);
-      return;
-    }
-    if (view.hasFocus || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key !== 'i' && e.key !== 'o') return;
-    if (isEditable(e.target as Element | null)) return;
-    e.preventDefault();
-    if (e.key === 'i') {
-      view.dispatch({ selection: { anchor: 0 } });
-    } else {
-      const end = view.state.doc.length;
-      view.dispatch({ changes: { from: end, insert: '\n' }, selection: { anchor: end + 1 } });
-    }
-    view.focus();
-  };
   document.addEventListener('visibilitychange', onHidden);
-  document.addEventListener('keydown', onKey);
+
+  // Browse-context keys (`i` / `o` to start editing from outside the editor,
+  // ...) and the edit-context handlers act on this editor.
+  shortcuts?.setEditor(editorApi(view, commitThen));
 }
