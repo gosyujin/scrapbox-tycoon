@@ -2,100 +2,38 @@
 
 作業を始める前に [README.md](README.md) の概要を読むこと。アーキテクチャは
 [docs/architecture.md](docs/architecture.md)、経緯は [docs/decisions/](docs/decisions/) にある。
+ファイル別の「触ると壊れる箇所」は `.claude/rules/` にあり、該当ファイルを開くと自動で読み込まれる
+(同期層 `src/store/github-*.ts` / `src/merge.ts`、エディタ `src/app.ts` / `src/editor.ts` / `cm-editor/`、キー操作 `src/keymap.ts` / `src/shortcuts.ts`、ページツールバー・pin `src/pins.ts`、`test/`)。
 
-## この codebase 特有の注意点
+## 不具合報告を受けたとき
 
-- **エディタ (`src/editor.ts` → `cm-editor/index.ts`) の `onChange` は blur/commit 時に一度だけ発火する。**
-  キー入力の度に呼ばれるものではない。「編集途中の一時的な状態かもしれない」
-  という前提で `app.ts` 側にフォールバック処理を書くと、過去に実際に
-  タイトル/内容の不整合バグを生んだ ([docs/decisions/04-empty-page-title-desync.md](docs/decisions/04-empty-page-title-desync.md) 参照)。
-  `onChange` 内で lines[0] が空 / 想定外の値になるケースは、「編集完了として
-  確定した値」として扱う。
+- **同期関連の報告は、まず設定画面の「同期ログをコピー(デバッグ用)」の結果**
+  (`GitHubSyncStore.getStatusLogText()`、localStorage の `scrapbox_tycoon_sync_log_v1`)を見る。
+  `state=idle` かつ `lastError` なしで完了していれば、GitHub 同期層は無関係と見てよく、ローカルのデータ整合性側を疑う方が早い。
+- **例外: 「同期後もページ一覧/本体が古いまま」は、ログが正常でも `github-store.ts` の fetch に `cache: 'no-store'` が付いているかを疑う。**
+  ブラウザの HTTP キャッシュが古い ref を返すだけなので、ログ上は正常に完了して見える
+  ([docs/decisions/06-stale-ref-http-cache.md](docs/decisions/06-stale-ref-http-cache.md) の「6.」)。
+  `GET git/ref/heads/<branch>` は `max-age=60` で返るため、`no-store` が無いと自分の commit 直後でも最大60秒古い ref が返り、
+  `pull()` がそれを他デバイスの変更と誤認してローカルを巻き戻す。**`no-store` は外さない。**
+- `Could not save after 8 attempts: branch moved during save` のような外的要因が絡むエラーは、手元のモックで無理に再現しようとしない。
+  複数タブ/デバイスの同時書き込みや回線起因の可能性が高い。確証のない推測でリトライ回数・待機時間を増やす対症療法を先回りして入れず、再現手順やタイミングの証拠が出てから対応する。
 
-- **同期関連の不具合報告を受けたら、まず設定画面の「同期ログをコピー
-  （デバッグ用）」の結果 (`GitHubSyncStore.getStatusLogText()`,
-  localStorage の `scrapbox_tycoon_sync_log_v1`) を確認する。** ここで
-  `state=idle` かつ `lastError` なしで完了していれば、GitHub 同期層
-  (`github-store.ts` / `github-sync-store.ts`) は無関係と判断してよく、
-  ローカルのデータ整合性側を疑う方が早い —— **ただし例外として、
-  ブラウザの HTTP キャッシュ絡みの不具合 ([docs/decisions/06-stale-ref-http-cache.md](docs/decisions/06-stale-ref-http-cache.md) の「6. 同期直後に
-  PC/スマホの表示が古い内容へ『巻き戻る』問題」参照) はこのヒューリスティック
-  をすり抜ける。** GitHub 側のレスポンスがそのまま古いだけなので `state=idle`
-  かつ `lastError` なしで「正常に」完了して見える。「同期後もページ一覧/
-  ページ本体の内容が古いまま」という報告では、ログが正常でも
-  `github-store.ts` の fetch がキャッシュを無効化しているか
-  (`cache: 'no-store'`) を併せて疑うこと。
+## 変更の進め方
 
-- **`GitHubStore` 内の全 `fetch()` には `cache: 'no-store'` を必ず付ける。**
-  `GET git/ref/heads/<branch>` (ブランチ先端を読む唯一の入口) は
-  `Cache-Control: public, max-age=60, s-maxage=60` を返す (実 API で確認済み)。
-  書き込み先の `PATCH git/refs/heads/<branch>` (複数形) はこの GET
-  (単数形) と別 URL なので、ブラウザはこの PATCH でその GET のキャッシュを
-  無効化する手段を持たない —— つまり指定なしだと、自分自身の commit
-  直後でも最大60秒間、書き込み前の古い ref が返り得る。`pull()` はこれを
-  「他デバイスの変更」と誤認してローカルを古い内容で上書きしてしまう
-  ([docs/decisions/06-stale-ref-http-cache.md](docs/decisions/06-stale-ref-http-cache.md) 参照)。`git/commits/<sha>` や `git/trees/<sha>` のような
-  sha 直参照はキャッシュされても内容的には無害だが、可変な ref だけ
-  個別対応するより全リクエスト一律で無効化する方が単純。
-
-- **`Could not save after 8 attempts: branch moved during save` のような
-  「外的要因が絡む」エラーは、手元のモック (`test/helpers/mock-github-api.mjs`) だけで
-  無理に再現しようとしない。** このリポジトリでの調査では、単一操作や
-  2 インスタンス同時同期のシミュレーションでは再現せず、実際には複数タブ/
-  デバイスの同時書き込みや回線起因である可能性が高いという結論に至った。
-  再現しないこと自体はバグがないことの証明にはならないが、確証のない推測で
-  リトライ回数を増やす、待機時間を延ばす等の対症療法を先回りして入れない。
-  具体的な再現手順やタイミングの証拠が新たに出てから対応する。
-
-- **Page レコードの形が変わるような修正 (フィールドの意味変更、フォールバック
-  ロジックの変更等) は既存の保存済みデータを遡って直さない。** 修正後も
-  ユーザーの実データに壊れたレコードが残っている前提で、手動修復の方法を
-  必ず伝えること。
-
-- **内部で fire-and-forget している `Promise` (`void foo()` の形) には必ず
-  `.catch()` を付ける。** `runSync()` のように呼び出し元 (直接 await する側)
-  への通知のために re-throw している関数を、内部のタイマー等から await せず
-  呼ぶ場合、その関数側で失敗が既に完全に処理済みであっても、呼び出し側に
-  `.catch()` がないと「未処理の Promise rejection」としてコンソールに出る。
-
-- **Browser pane (このセッションの組み込みブラウザ) でテキストエリアの
-  blur を JS から発生させたい場合、`element.blur()` ではなく
-  `element.dispatchEvent(new FocusEvent('blur'))` を使う。** Browser pane
-  では `document.hasFocus()` が fronted なタブでも `false` になることがあり、
-  この状態だと `.blur()` は `document.activeElement` を変えるだけで実際の
-  `blur` イベントリスナーを発火させないことがある (新規ページ限定の
-  バグに見えたが、実際はテスト手法側の問題だった)。
-
-- 新しい回帰テストを書くときは既存の `test/helpers/mock-github-api.mjs` (インメモリ
-  Git Data API モデル、fast-forward-only な ref 更新) を使い、コンパイル後の
-  `js/store/...` (再実装ではなく実際のビルド成果物) に対してテストする、
-  という既存パターンに合わせる。
+- **Page レコードの形が変わる修正(フィールドの意味変更、フォールバックの変更等)は、既存の保存済みデータを遡って直さない。**
+  ユーザーの実データに壊れたレコードが残っている前提で、手動修復の方法を必ず伝える([docs/troubleshooting.md](docs/troubleshooting.md))。
+- 内部で fire-and-forget している `Promise`(`void foo()` の形)には必ず `.catch()` を付ける。
+  `runSync()` のように呼び出し元への通知のために re-throw する関数を、タイマー等から await せずに呼ぶと、
+  失敗が処理済みでも「未処理の Promise rejection」としてコンソールに出る。
+- **Browser pane(組み込みブラウザ)でテキストエリアの blur を JS から起こすときは、`element.blur()` ではなく
+  `element.dispatchEvent(new FocusEvent('blur'))` を使う。** Browser pane では `document.hasFocus()` が前面のタブでも
+  `false` になることがあり、`.blur()` は `document.activeElement` を変えるだけでリスナーを発火させないことがある
+  (新規ページ限定のバグに見えたが、テスト手法側の問題だった)。
 
 ## ドキュメント運用ルール
-- 作業開始時は CLAUDE.md と README の概要だけ読む。docs/ は「触る前に読む」に従い、該当作業のときだけ読む。CHANGELOG は全文を読まず直近のエントリだけ見る。
+- 作業開始時は CLAUDE.md と README の概要だけ読む。docs/ は `.claude/rules/` の指示に従い、該当作業のときだけ読む。CHANGELOG は全文を読まず直近のエントリだけ見る。
 - README に経緯・実装ログ・機能の詳細を書かない。機能を追加したら README には一行、詳細は docs/features.md に書く。
 - 実装完了時は CHANGELOG に1〜3行で追記する。調査や判断に経緯がある場合は docs/decisions/ に書き、CHANGELOG からリンクする。
-- 触ると壊れる箇所・変更禁止の理由は docs/technical-notes.md に書き、CLAUDE.md の「触る前に読む」に1行で要約する。
+- 触ると壊れる箇所・変更禁止の理由は docs/technical-notes.md に書き、`.claude/rules/` の該当ファイル(`paths` に対象ファイルを書く)に1行で要約する。特定のファイルに結びつかない注意だけ CLAUDE.md に書く。
 - 実機確認が必要で未確認の項目は technical-notes.md の「未検証」に書く。確認できたら削除し、CHANGELOG に「確認済み」と1行残す。
 - README が150行、CLAUDE.md が200行を超えたら、追記せず分割を提案する。
-
-## 触る前に読む
-- 同期層 (`github-sync-store.ts` / `github-store.ts`) 全般: [docs/technical-notes.md](docs/technical-notes.md), [docs/architecture.md](docs/architecture.md)
-  - 内部で fire-and-forget する Promise (`void this.syncNow()` 等) には必ず `.catch()` を付ける (付けないと処理済みの失敗が unhandled rejection になる)。
-  - `GitHubStore` の全 `fetch()` に `cache: 'no-store'` を付ける (ref 読み取りが最大60秒キャッシュされ、`pull()` が自分の書き込みを他デバイスの変更と誤認してローカルを巻き戻す)。
-  - `pull()` は dirty なページでも remote の `updated` が `lastSyncedUpdated` と食い違えば `mergeDiverged()` で 3-way マージする (基準版は `meta.baseCommit[title]` のコミットから `getPageAt()` で取得。無ければ `commonLines()`)。**「(sync conflict)」コピーページはもう作らない** (配られて複数端末で同時に解消され、解消自体が新しい競合になったため)。同じ行の衝突は `merge.ts` のマーカーでページ内に残す。マージは対称・決定的でなければならない (マーカーに端末名/時刻を入れない、両側は `updated` 順) — 2台が同じ食い違いをマージしても同一内容になるのが収束の条件。 → [decisions/13](docs/decisions/13-three-way-merge-in-page-markers.md)
-  - `push()` の各変更は `expectedUpdated` (最後に見た remote の `updated`) を持ち、`pushBatch()` が commit 試行ごとに照合して食い違えば `PushConflictError` を投げる (`runSync()` が再 pull → 再 push、最大4回)。`meta` は他タブと共有の localStorage なので、判断・更新は必ず `fresh()` / `updateMeta()` 経由 (インスタンスの `this.meta` を直接書き戻さない)。`(sync conflict)` コピー自体は競合判定の対象外。 → [decisions/12](docs/decisions/12-sync-cas-push.md)
-  - `push()` は `pushBatch()` の前に `meta.pendingPush` を永続化する (応答が届かなかった自分の push を競合と誤認しないため)。remote とローカルの `lines` が同一なら競合扱いにしない。
-  - `savePage()` は既存と同一内容なら no-op (blur の度に呼ばれる `onChange` が無変更ページを dirty にして偽の競合を作るため)。pull 省略用の `lastPulledHeadSha` は pull「前」に読んだ HEAD を保存する。 → [decisions/09](docs/decisions/09-noop-save-conflict-and-polling.md)
-  - 旧版が作った `(sync conflict)` コピーは残っているので、`isSyncConflictTitle()` は競合判定の対象外 (後の push が勝つ) として残している。`lines[0]` はページの identity: マージ対象から除外し、マーカーが 1 行目に来ないようにしている。
-- ページ編集・タイトル処理 (`app.ts` の `onChange` / `editor.ts` / `cm-editor/`): [docs/technical-notes.md](docs/technical-notes.md), [decisions/11](docs/decisions/11-codemirror-editor.md)
-  - `cm-editor/` は tsc の対象外 (bare import を解決できないため)。esbuild で `js/cm-editor.js` にバンドルされ、`src/editor.ts` が `import('./cm-editor.js?v=…')` で遅延ロードする。ここを `src/` に移したり、静的 import にしない。
-  - エディタの CSS は `.sbe` 配下 / `sbe-` 接頭辞のみ (`cm-editor/style.ts`)。parser.ts と共通の装飾クラス (`sb-h1` 等) は style.css 側で定義済みなので再定義しない。
-  - 1行目が空になったページは "Untitled" (衝突時 `uniqueTitle()` で `_N`) にリネームし、`/^Untitled(_\d+)?$/` なら現在のタイトルを維持する (無変更の blur で番号が増え続けないため)。
-- エディタのインデント (`cm-editor/style.ts` の `.sbe-ws`): 空白 1 文字 = 1 セルは `letter-spacing` で作る。`inline-block` に戻すとキャレットがセル内にずれ、`white-space: pre` を外すと長い URL でバレットが孤立する ([technical-notes #10](docs/technical-notes.md))。
-- キー操作 (`src/keymap.ts` / `src/shortcuts.ts` / `cm-editor/shortcuts.ts`): [decisions/14](docs/decisions/14-scrapboxshortcutkey-integration.md)
-  - コンボの正規化は ScrapboxShortcutKey (UserScript) と同じ文字列にならないと、UserScript の登録が既定の割り当てを置き換えず二重になる。ハンドラは `false` を返すとキーを握りつぶし、それ以外は既定動作に流す。IME 変換中 (`isComposing` / `keyCode 229`) と `key` の無い合成イベントは `Keymap` が無視する。
-  - edit コンテキストは `cm-editor/index.ts` の `Prec.highest` keydown で受ける。`document` に keydown を足して `i`/`o` 等を処理しない (`installGlobalKeys` と二重発火する)。
-- ページツールバー・pin・複製 (`app.ts` の `pageToolsHtml` / `wirePageTools`, `src/pins.ts`): [decisions/15](docs/decisions/15-page-menu-pin-duplicate.md)
-  - pin は端末ローカル (localStorage) で **Page レコードに入れない** (入れると同期層の no-op 判定・pull の内容同一判定・3-way マージ・push CAS の全部に手が入る)。ツールバーのボタンは `mousedown` を `preventDefault` してエディタを blur (= commit) させない。
-- 既存データの修復方法: [docs/troubleshooting.md](docs/troubleshooting.md) (修正は保存済みデータを遡って直さない)

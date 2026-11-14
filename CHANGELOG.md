@@ -1,6 +1,7 @@
 # CHANGELOG
 
 1エントリ1〜3行。経緯のあるものは `docs/decisions/` にリンクする。コミットは新しい順。
+- 2026-11-14 Changed: CLAUDE.md の同期層・エディタ・テストの注意を、ファイル別の `.claude/rules/*.md`(`paths` 付き。該当ファイルを開いたときだけ読み込まれる)に移した。不具合報告の見方・データ形の変更・Browser pane の blur など特定のファイルに結びつかない注意と、`no-store` を外さない理由は CLAUDE.md に残す(約11,000字→約4,400字)。
 - 2026-11-09 Added/Changed: ページのランダム (🔀) と削除を本家 Scrapbox の配置に合わせ、ページカード右のツールバー (ページメニュー + ランダム) に移動。ページメニューに **ピン留め** (端末ローカル、一覧の先頭に表示) と **ページを複製** を追加。 → [decisions/15](docs/decisions/15-page-menu-pin-duplicate.md)
 - 2026-11-09 Added/Changed: ScrapboxShortcutKey (UserScript) 流のキー操作を組み込み (選択ポップアップの Tab/Enter/数字操作、Ctrl+Q/Enter/;、行のブラケット化、Alt+Q ランダム、Shift+H/N、`i`/`o` は直前のキャレット位置へ)。**Tab は半角スペース挿入に変更**。`window.tycoonShortcut` で UserScript が割り当てを上書き可能 (UserScript 側の変更は未適用)。 → [decisions/14](docs/decisions/14-scrapboxshortcutkey-integration.md)
 - 2026-11-01 Fixed: エディタのインデント表示を修正。(1) 長い URL / 長い単語の行でバレットだけが行頭に残り本文が次行に落ちる、(2) インデント末尾でキャレットが本文より左に描かれ、移動幅が 1 セルずつにならない (特に最初の 1 歩が半分)、(3) コードブロックの開始位置とコード内のインデントが区別できない、を解消。コード本文の開始位置にガイド線を追加。実機 (iOS Safari) は未確認。 → [technical-notes](docs/technical-notes.md)
