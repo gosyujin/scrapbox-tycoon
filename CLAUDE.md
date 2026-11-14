@@ -4,6 +4,7 @@
 [docs/architecture.md](docs/architecture.md)、経緯は [docs/decisions/](docs/decisions/) にある。
 ファイル別の「触ると壊れる箇所」は `.claude/rules/` にあり、該当ファイルを開くと自動で読み込まれる
 (同期層 `src/store/github-*.ts` / `src/merge.ts`、エディタ `src/app.ts` / `src/editor.ts` / `cm-editor/`、キー操作 `src/keymap.ts` / `src/shortcuts.ts`、ページツールバー・pin `src/pins.ts`、`test/`)。
+自動で読み込まれるのは Read / Edit ツールで開いたときだけ。Bash(`cat` / `sed` / `grep` など)で読み書きするときは、先に該当する `.claude/rules/*.md` を読む。
 
 ## 不具合報告を受けたとき
 
